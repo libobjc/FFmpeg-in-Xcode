@@ -30,7 +30,10 @@
 #include "decode.h"
 #include "h264dec.h"
 #include "hevcdec.h"
+// Edit by Single
+#define Picture FFmpegPicture
 #include "mpegvideo.h"
+#undef Picture
 #include <TargetConditionals.h>
 
 #ifndef kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder

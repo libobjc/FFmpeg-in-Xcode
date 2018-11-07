@@ -52,7 +52,7 @@ enum Inner{
     MINCOL,
 };
 
-typedef struct Point {
+typedef struct {
     double p[2];
     uint32_t val;
 } Point;
