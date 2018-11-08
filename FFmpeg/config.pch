@@ -9,9 +9,7 @@
 #ifndef config_pch
 #define config_pch
 
-#include "libavformat/internal.h"
 #include "libavutil/internal.h"
 #include "libavutil/intmath.h"
-#include "config.h"
 
 #endif /* config_pch */

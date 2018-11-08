@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9C35EC892193592300FD4FE8"
-               BuildableName = "Build"
-               BlueprintName = "Build"
+               BlueprintIdentifier = "9C993F8A2193DAE8003761DB"
+               BuildableName = "build-2"
+               BlueprintName = "build-2"
                ReferencedContainer = "container:FFmpeg.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -32,9 +32,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC892193592300FD4FE8"
-            BuildableName = "Build"
-            BlueprintName = "Build"
+            BlueprintIdentifier = "9C993F8A2193DAE8003761DB"
+            BuildableName = "build-2"
+            BlueprintName = "build-2"
             ReferencedContainer = "container:FFmpeg.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -55,12 +55,18 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC892193592300FD4FE8"
-            BuildableName = "Build"
-            BlueprintName = "Build"
+            BlueprintIdentifier = "9C993F8A2193DAE8003761DB"
+            BuildableName = "build-2"
+            BlueprintName = "build-2"
             ReferencedContainer = "container:FFmpeg.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <CommandLineArguments>
+         <CommandLineArgument
+            argument = "build-2"
+            isEnabled = "YES">
+         </CommandLineArgument>
+      </CommandLineArguments>
       <AdditionalOptions>
       </AdditionalOptions>
    </LaunchAction>
@@ -74,9 +80,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC892193592300FD4FE8"
-            BuildableName = "Build"
-            BlueprintName = "Build"
+            BlueprintIdentifier = "9C993F8A2193DAE8003761DB"
+            BuildableName = "build-2"
+            BlueprintName = "build-2"
             ReferencedContainer = "container:FFmpeg.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
