@@ -52,6 +52,7 @@ enum Inner{
     MINCOL,
 };
 
+// Edit by Single
 typedef struct {
     double p[2];
     uint32_t val;
