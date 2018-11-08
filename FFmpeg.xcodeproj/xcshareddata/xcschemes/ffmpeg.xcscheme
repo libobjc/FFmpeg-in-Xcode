@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9C35EC47219356DE00FD4FE8"
-               BuildableName = "ffmpeg"
-               BlueprintName = "ffmpeg"
+               BlueprintIdentifier = "9C169A862193E8FC0044126F"
+               BuildableName = "libFFmpeg.a"
+               BlueprintName = "FFmpeg"
                ReferencedContainer = "container:FFmpeg.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -29,15 +29,6 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
       </Testables>
-      <MacroExpansion>
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC47219356DE00FD4FE8"
-            BuildableName = "ffmpeg"
-            BlueprintName = "ffmpeg"
-            ReferencedContainer = "container:FFmpeg.xcodeproj">
-         </BuildableReference>
-      </MacroExpansion>
       <AdditionalOptions>
       </AdditionalOptions>
    </TestAction>
@@ -51,22 +42,15 @@
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
+      <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC47219356DE00FD4FE8"
-            BuildableName = "ffmpeg"
-            BlueprintName = "ffmpeg"
+            BlueprintIdentifier = "9C169A862193E8FC0044126F"
+            BuildableName = "libFFmpeg.a"
+            BlueprintName = "FFmpeg"
             ReferencedContainer = "container:FFmpeg.xcodeproj">
          </BuildableReference>
-      </BuildableProductRunnable>
-      <CommandLineArguments>
-         <CommandLineArgument
-            argument = "-i video.mp4 -o video.mkv"
-            isEnabled = "YES">
-         </CommandLineArgument>
-      </CommandLineArguments>
+      </MacroExpansion>
       <AdditionalOptions>
       </AdditionalOptions>
    </LaunchAction>
@@ -76,16 +60,15 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
+      <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9C35EC47219356DE00FD4FE8"
-            BuildableName = "ffmpeg"
-            BlueprintName = "ffmpeg"
+            BlueprintIdentifier = "9C169A862193E8FC0044126F"
+            BuildableName = "libFFmpeg.a"
+            BlueprintName = "FFmpeg"
             ReferencedContainer = "container:FFmpeg.xcodeproj">
          </BuildableReference>
-      </BuildableProductRunnable>
+      </MacroExpansion>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">
