@@ -108,15 +108,14 @@ int main(int argc, const char * argv[]) {
         if (argc < 2) {
             return 0;
         }
-        if (strcmp(argv[1], "clean") == 0 || strcmp(argv[1], "build-1") == 0) {
-            dirs = [dirs mutableCopy];
-            [(NSMutableArray *)dirs addObject:@"compat"];
+        if (strcmp(argv[1], "build-1") == 0) {
+            // Clean
             for (NSString * o in dirs) {
                 SGFRemove(SGFAppend(d, o));
             }
+            SGFRemove(SGFAppend(d, @"compat"));
             SGFRemove(SGFAppend(d, @"config.h"));
-        }
-        if (strcmp(argv[1], "build-1") == 0) {
+            // Copy
             for (NSString * o in dirs) {
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".h", nil);
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".o", @[@".c", @".m"]);
@@ -125,13 +124,15 @@ int main(int argc, const char * argv[]) {
             SGFRemove(SGFAppend(d, @"libavutil/time.h"));
         }
         if (strcmp(argv[1], "build-2") == 0) {
-            dirs = [dirs mutableCopy];
-            [(NSMutableArray *)dirs addObject:@"compat"];
+            // Copy
             for (NSString * o in dirs) {
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".h", nil);
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".c", nil);
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".inc", nil);
             }
+            SGFCopyExt(SGFAppend(s, @"compat"), SGFAppend(d, @"compat"), YES, @".h", nil);
+            SGFCopyExt(SGFAppend(s, @"compat"), SGFAppend(d, @"compat"), YES, @".c", nil);
+            // Edit
             SGFReplace(SGFAppend(d, @"libavcodec/videotoolbox.c"),
                        @"#include \"mpegvideo.h\"",
                        @"// Edit by Single\n#define Picture FFPicture\n#include \"mpegvideo.h\"\n#undef Picture");
