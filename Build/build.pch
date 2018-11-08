@@ -1,0 +1,15 @@
+//
+//  config.pch
+//  libavutil
+//
+//  Created by Single on 2018/10/11.
+//  Copyright © 2018 Single. All rights reserved.
+//
+
+#ifndef config_pch
+#define config_pch
+
+#include "libavutil/internal.h"
+#include "libavutil/intmath.h"
+
+#endif /* config_pch */
