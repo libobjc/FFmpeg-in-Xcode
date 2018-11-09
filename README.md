@@ -17,7 +17,7 @@
 
 - Add launch arguments at ‘Edit Scheme’ panel.
 
-![arguments](https://github.com/libobjc/FFmpeg-in-Xcode/blob/master/snapshot-arguments.png?raw=true)
+![arguments](https://github.com/libobjc/FFmpeg-in-Xcode/blob/master/snapshot/arguments.png?raw=true)
 
 ---
 
