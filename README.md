@@ -9,7 +9,7 @@
 
 ## Schemes
 
-- Run ffmpeg & ffplay & ffprobe.
+- Run ffmpeg, ffplay, or ffprobe.
 
 ![schemes](https://github.com/libobjc/FFmpeg-in-Xcode/blob/master/snapshot/schemes.png?raw=true)
 
@@ -19,14 +19,10 @@
 
 ![arguments](https://github.com/libobjc/FFmpeg-in-Xcode/blob/master/snapshot/arguments.png?raw=true)
 
----
-
 ## How to use?
 
 1. Clone this repo.
 1. Direct run ffmpeg, ffplay, or ffprobe.
-
----
 
 ## How to customize?
 
@@ -36,7 +32,7 @@
 1. Remove FFmpeg source files from project.
 1. Open 'build.m', Replace to your own FFmpeg and project paths.
 1. Select scheme to build-1, and run it.
-1. Add the files under %(ProjectRoot)/FFmpeg to the project(target is FFmpeg, fftools except).
+1. Add the files under $(ProjectRoot)/FFmpeg to the project(target is FFmpeg, fftools except).
 1. Configure fftools to correct target. Refer to existing project 'Target Membership'.
 1. Select scheme to build-2, and run it.
 1. Done.
