@@ -678,7 +678,7 @@ static void implicit_weight_table(const H264Context *h, H264SliceContext *sl, in
             cur_poc = h->cur_pic_ptr->field_poc[h->picture_structure - 1];
         }
         if (sl->ref_count[0] == 1 && sl->ref_count[1] == 1 && !FRAME_MBAFF(h) &&
-            sl->ref_list[0][0].poc + (int64_t)sl->ref_list[1][0].poc == 2 * cur_poc) {
+            sl->ref_list[0][0].poc + (int64_t)sl->ref_list[1][0].poc == 2LL * cur_poc) {
             sl->pwt.use_weight        = 0;
             sl->pwt.use_weight_chroma = 0;
             return;
@@ -1092,6 +1092,12 @@ static int h264_init_ps(H264Context *h, const H264SliceContext *sl, int first_sl
                 h->avctx->colorspace      = sps->colorspace;
             }
         }
+
+        if (h->sei.alternative_transfer.present &&
+            av_color_transfer_name(h->sei.alternative_transfer.preferred_transfer_characteristics) &&
+            h->sei.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
+            h->avctx->color_trc = h->sei.alternative_transfer.preferred_transfer_characteristics;
+        }
     }
 
     if (!h->context_initialized || must_reinit || needs_reinit) {
@@ -1330,12 +1336,6 @@ static int h264_export_frame_props(H264Context *h)
             tc_sd[i + 1] = tc;
         }
         h->sei.picture_timing.timecode_cnt = 0;
-    }
-
-    if (h->sei.alternative_transfer.present &&
-        av_color_transfer_name(h->sei.alternative_transfer.preferred_transfer_characteristics) &&
-        h->sei.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
-        h->avctx->color_trc = cur->f->color_trc = h->sei.alternative_transfer.preferred_transfer_characteristics;
     }
 
     return 0;

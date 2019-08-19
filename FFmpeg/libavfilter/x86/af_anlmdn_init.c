@@ -1,7 +1,4 @@
 /*
- * Opus encoder assembly optimizations
- * Copyright (C) 2017 Ivan Kalvachev <ikalvachev@gmail.com>
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -20,26 +17,19 @@
  */
 
 #include "config.h"
-
+#include "libavutil/attributes.h"
+#include "libavutil/cpu.h"
 #include "libavutil/x86/cpu.h"
-#include "libavcodec/opus_pvq.h"
+#include "libavfilter/af_anlmdndsp.h"
 
-extern float ff_pvq_search_approx_sse2(float *X, int *y, int K, int N);
-extern float ff_pvq_search_approx_sse4(float *X, int *y, int K, int N);
-extern float ff_pvq_search_exact_avx  (float *X, int *y, int K, int N);
+float ff_compute_distance_ssd_sse(const float *f1, const float *f2,
+                                  ptrdiff_t len);
 
-av_cold void ff_opus_dsp_init_x86(CeltPVQ *s)
+av_cold void ff_anlmdn_init_x86(AudioNLMDNDSPContext *s)
 {
     int cpu_flags = av_get_cpu_flags();
 
-#if CONFIG_OPUS_ENCODER
-    if (EXTERNAL_SSE2(cpu_flags))
-        s->pvq_search = ff_pvq_search_approx_sse2;
-
-    if (EXTERNAL_SSE4(cpu_flags))
-        s->pvq_search = ff_pvq_search_approx_sse4;
-
-    if (EXTERNAL_AVX_FAST(cpu_flags))
-        s->pvq_search = ff_pvq_search_exact_avx;
-#endif
+    if (EXTERNAL_SSE(cpu_flags)) {
+        s->compute_distance_ssd = ff_compute_distance_ssd_sse;
+    }
 }

@@ -1,6 +1,6 @@
 /*
- * NewTek NDI common code
- * Copyright (c) 2017 Maksym Veremeyenko
+ * Opus encoder assembly optimizations
+ * Copyright (C) 2017 Ivan Kalvachev <ikalvachev@gmail.com>
  *
  * This file is part of FFmpeg.
  *
@@ -19,12 +19,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVDEVICE_LIBNDI_NEWTEK_COMMON_H
-#define AVDEVICE_LIBNDI_NEWTEK_COMMON_H
+#include "config.h"
 
-#include <Processing.NDI.Lib.h>
+#include "libavutil/x86/cpu.h"
+#include "libavcodec/opus_pvq.h"
 
-#define NDI_TIME_BASE 10000000
-#define NDI_TIME_BASE_Q (AVRational){1, NDI_TIME_BASE}
+extern float ff_pvq_search_approx_sse2(float *X, int *y, int K, int N);
+extern float ff_pvq_search_approx_sse4(float *X, int *y, int K, int N);
+extern float ff_pvq_search_exact_avx  (float *X, int *y, int K, int N);
 
-#endif
+av_cold void ff_celt_pvq_init_x86(CeltPVQ *s)
+{
+    int cpu_flags = av_get_cpu_flags();
+
+    if (EXTERNAL_SSE2(cpu_flags))
+        s->pvq_search = ff_pvq_search_approx_sse2;
+
+    if (EXTERNAL_SSE4(cpu_flags))
+        s->pvq_search = ff_pvq_search_approx_sse4;
+
+    if (EXTERNAL_AVX_FAST(cpu_flags))
+        s->pvq_search = ff_pvq_search_exact_avx;
+}

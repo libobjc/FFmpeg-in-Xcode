@@ -33,6 +33,7 @@
 static int parse_mb_skip(Wmv2Context *w)
 {
     int mb_x, mb_y;
+    int coded_mb_count = 0;
     MpegEncContext *const s = &w->s;
     uint32_t *const mb_type = s->current_picture_ptr->mb_type;
 
@@ -83,6 +84,14 @@ static int parse_mb_skip(Wmv2Context *w)
         }
         break;
     }
+
+    for (mb_y = 0; mb_y < s->mb_height; mb_y++)
+        for (mb_x = 0; mb_x < s->mb_width; mb_x++)
+            coded_mb_count += !IS_SKIP(mb_type[mb_y * s->mb_stride + mb_x]);
+
+    if (coded_mb_count > get_bits_left(&s->gb))
+        return AVERROR_INVALIDDATA;
+
     return 0;
 }
 
@@ -181,6 +190,14 @@ int ff_wmv2_decode_secondary_picture_header(MpegEncContext *s)
             }
 
             s->dc_table_index = get_bits1(&s->gb);
+
+            // at minimum one bit per macroblock is required at least in a valid frame,
+            // we discard frames much smaller than this. Frames smaller than 1/8 of the
+            // smallest "black/skip" frame generally contain not much recoverable content
+            // while at the same time they have the highest computational requirements
+            // per byte
+            if (get_bits_left(&s->gb) * 8LL < (s->width+15)/16 * ((s->height+15)/16))
+                return AVERROR_INVALIDDATA;
         }
         s->inter_intra_pred = 0;
         s->no_rounding      = 1;
@@ -221,6 +238,9 @@ int ff_wmv2_decode_secondary_picture_header(MpegEncContext *s)
             s->rl_table_index        = decode012(&s->gb);
             s->rl_chroma_table_index = s->rl_table_index;
         }
+
+        if (get_bits_left(&s->gb) < 2)
+            return AVERROR_INVALIDDATA;
 
         s->dc_table_index   = get_bits1(&s->gb);
         s->mv_table_index   = get_bits1(&s->gb);
