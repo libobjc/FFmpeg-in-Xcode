@@ -10671,11 +10671,11 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				9C35EC2E219354EB00FD4FE8 /* ffplay */,
-				9C35EC47219356DE00FD4FE8 /* ffmpeg */,
-				9C35EC5E2193577A00FD4FE8 /* ffprobe */,
 				9C169A862193E8FC0044126F /* FFmpeg */,
 				9CE70E5521934B8A006527D2 /* SDL2 */,
+				9C35EC47219356DE00FD4FE8 /* ffmpeg */,
+				9C35EC2E219354EB00FD4FE8 /* ffplay */,
+				9C35EC5E2193577A00FD4FE8 /* ffprobe */,
 				9C993F7F2193DAD0003761DB /* build-1 */,
 				9C993F8A2193DAE8003761DB /* build-2 */,
 			);
