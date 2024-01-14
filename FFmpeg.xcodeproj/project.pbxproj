@@ -7,9 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4EC227E12B52F63900CACFB0 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227D42B52F62C00CACFB0 /* libSDL2.a */; };
-		4EC227E42B52F68200CACFB0 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227D42B52F62C00CACFB0 /* libSDL2.a */; };
-		4EC227E62B52F73000CACFB0 /* libSDL2.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227D42B52F62C00CACFB0 /* libSDL2.a */; };
+		4EC227FC2B537DA100CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
+		4EC227FD2B537DEE00CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
+		4EC227FE2B537DF500CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
 		9C16AEC92193FFD60044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
 		9C16AECA2193FFDB0044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
 		9C16AECB2193FFE00044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
@@ -2737,6 +2737,7 @@
 
 /* Begin PBXFileReference section */
 		4EC227BD2B52F62C00CACFB0 /* SDL.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = SDL.xcodeproj; path = SDL/Xcode/SDL/SDL.xcodeproj; sourceTree = "<group>"; };
+		4EC227F92B537D4100CACFB0 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		9C169A872193E8FC0044126F /* libFFmpeg.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libFFmpeg.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C35EC2F219354EB00FD4FE8 /* ffplay */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ffplay; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C35EC3F2193553300FD4FE8 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
@@ -5355,7 +5356,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4EC227E12B52F63900CACFB0 /* libSDL2.a in Frameworks */,
+				4EC227FC2B537DA100CACFB0 /* SDL2.framework in Frameworks */,
 				9C35EC402193553300FD4FE8 /* libbz2.tbd in Frameworks */,
 				9C35EC422193553A00FD4FE8 /* libiconv.tbd in Frameworks */,
 				9C16AEC92193FFD60044126F /* libFFmpeg.a in Frameworks */,
@@ -5366,7 +5367,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4EC227E42B52F68200CACFB0 /* libSDL2.a in Frameworks */,
+				4EC227FE2B537DF500CACFB0 /* SDL2.framework in Frameworks */,
 				9C35EC592193574F00FD4FE8 /* libbz2.tbd in Frameworks */,
 				9C35EC5A2193575C00FD4FE8 /* libiconv.tbd in Frameworks */,
 				9C16AECA2193FFDB0044126F /* libFFmpeg.a in Frameworks */,
@@ -5377,7 +5378,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4EC227E62B52F73000CACFB0 /* libSDL2.a in Frameworks */,
+				4EC227FD2B537DEE00CACFB0 /* SDL2.framework in Frameworks */,
 				9C35EC6F2193579700FD4FE8 /* libbz2.tbd in Frameworks */,
 				9C35EC6E2193579100FD4FE8 /* libiconv.tbd in Frameworks */,
 				9C16AECB2193FFE00044126F /* libFFmpeg.a in Frameworks */,
@@ -8278,6 +8279,7 @@
 		9CE714E921934C51006527D2 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				4EC227F92B537D4100CACFB0 /* AVFoundation.framework */,
 				9C35EC412193553A00FD4FE8 /* libiconv.tbd */,
 				9C35EC3F2193553300FD4FE8 /* libbz2.tbd */,
 				9CE714FC21934C85006527D2 /* AudioToolbox.framework */,
