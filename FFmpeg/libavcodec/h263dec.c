@@ -28,12 +28,14 @@
 #define UNCHECKED_BITSTREAM_READER 1
 
 #include "libavutil/cpu.h"
+#include "libavutil/video_enc_params.h"
+
 #include "avcodec.h"
 #include "error_resilience.h"
 #include "flv.h"
 #include "h263.h"
 #include "h263_parser.h"
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "internal.h"
 #include "mpeg_er.h"
 #include "mpeg4video.h"
@@ -73,7 +75,6 @@ av_cold int ff_h263_decode_init(AVCodecContext *avctx)
     s->out_format      = FMT_H263;
 
     // set defaults
-    ff_mpv_decode_defaults(s);
     ff_mpv_decode_init(s, avctx);
 
     s->quant_precision = 5;
@@ -544,6 +545,8 @@ retry:
     avctx->has_b_frames = !s->low_delay;
 
     if (CONFIG_MPEG4_DECODER && avctx->codec_id == AV_CODEC_ID_MPEG4) {
+        if (s->pict_type != AV_PICTURE_TYPE_B && s->mb_num/2 > get_bits_left(&s->gb))
+            return AVERROR_INVALIDDATA;
         if (ff_mpeg4_workaround_bugs(avctx) == 1)
             goto retry;
         if (s->studio_profile != (s->idsp.idct == NULL))
@@ -743,7 +746,7 @@ const enum AVPixelFormat ff_h263_hwaccel_pixfmt_list_420[] = {
     AV_PIX_FMT_NONE
 };
 
-const AVCodecHWConfigInternal *ff_h263_hw_config_list[] = {
+const AVCodecHWConfigInternal *const ff_h263_hw_config_list[] = {
 #if CONFIG_H263_VAAPI_HWACCEL
     HWACCEL_VAAPI(h263),
 #endif

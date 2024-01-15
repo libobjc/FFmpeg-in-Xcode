@@ -226,6 +226,9 @@ static int lag_read_prob_header(lag_rac *rac, GetBitContext *gb)
         }
     }
 
+    if (scale_factor > 23)
+        return AVERROR_INVALIDDATA;
+
     rac->scale = scale_factor;
 
     /* Fill probability array with cumulative probability for each symbol. */
@@ -405,6 +408,9 @@ output_zeros:
         if (zero_run) {
             zero_run = 0;
             i += esc_count;
+            if (i >  end - dst ||
+                i >= src_end - src)
+                return AVERROR_INVALIDDATA;
             memcpy(dst, src, i);
             dst += i;
             l->zeros_rem = lag_calc_zero_run(src[i]);
@@ -709,16 +715,6 @@ static av_cold int lag_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-#if HAVE_THREADS
-static av_cold int lag_decode_init_thread_copy(AVCodecContext *avctx)
-{
-    LagarithContext *l = avctx->priv_data;
-    l->avctx = avctx;
-
-    return 0;
-}
-#endif
-
 AVCodec ff_lagarith_decoder = {
     .name           = "lagarith",
     .long_name      = NULL_IF_CONFIG_SMALL("Lagarith lossless"),
@@ -726,7 +722,6 @@ AVCodec ff_lagarith_decoder = {
     .id             = AV_CODEC_ID_LAGARITH,
     .priv_data_size = sizeof(LagarithContext),
     .init           = lag_decode_init,
-    .init_thread_copy = ONLY_IF_THREADS_ENABLED(lag_decode_init_thread_copy),
     .decode         = lag_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
 };

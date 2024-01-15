@@ -27,6 +27,8 @@
 
 const AVCodecTag ff_nut_subtitle_tags[] = {
     { AV_CODEC_ID_TEXT,             MKTAG('U', 'T', 'F', '8') },
+    { AV_CODEC_ID_ASS,              MKTAG('S', 'S', 'A',  0 ) },
+    { AV_CODEC_ID_ASS,              MKTAG('A', 'S', 'S',  0 ) },
     { AV_CODEC_ID_DVD_SUBTITLE,     MKTAG('D', 'V', 'D', 'S') },
     { AV_CODEC_ID_DVB_SUBTITLE,     MKTAG('D', 'V', 'B', 'S') },
     { AV_CODEC_ID_DVB_TELETEXT,     MKTAG('D', 'V', 'B', 'T') },
@@ -227,6 +229,8 @@ const AVCodecTag ff_nut_audio_tags[] = {
     { AV_CODEC_ID_PCM_S24LE,        MKTAG('P', 'S', 'D', 24 ) },
     { AV_CODEC_ID_PCM_S32BE,        MKTAG(32 , 'D', 'S', 'P') },
     { AV_CODEC_ID_PCM_S32LE,        MKTAG('P', 'S', 'D', 32 ) },
+    { AV_CODEC_ID_PCM_S64BE,        MKTAG(64 , 'D', 'S', 'P') },
+    { AV_CODEC_ID_PCM_S64LE,        MKTAG('P', 'S', 'D', 64 ) },
     { AV_CODEC_ID_PCM_S8,           MKTAG('P', 'S', 'D',  8 ) },
     { AV_CODEC_ID_PCM_U16BE,        MKTAG(16 , 'D', 'U', 'P') },
     { AV_CODEC_ID_PCM_U16LE,        MKTAG('P', 'U', 'D', 16 ) },

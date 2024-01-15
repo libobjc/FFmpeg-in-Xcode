@@ -76,6 +76,7 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUV420P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV444P16,
         AV_PIX_FMT_YUVA420P9, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA444P9,
         AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
+        AV_PIX_FMT_YUVA422P12, AV_PIX_FMT_YUVA444P12,
         AV_PIX_FMT_YUVA420P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA444P16,
         AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
         AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
@@ -284,14 +285,14 @@ static int config_output(AVFilterLink *outlink)
     if (s->depth <= 8 && s->filter == WEAK) {
         s->deblockh = deblockh8_weak;
         s->deblockv = deblockv8_weak;
-    } else if (s->depth >= 8 && s->filter == WEAK) {
+    } else if (s->depth > 8 && s->filter == WEAK) {
         s->deblockh = deblockh16_weak;
         s->deblockv = deblockv16_weak;
     }
     if (s->depth <= 8 && s->filter == STRONG) {
         s->deblockh = deblockh8_strong;
         s->deblockv = deblockv8_strong;
-    } else if (s->depth >= 8 && s->filter == STRONG) {
+    } else if (s->depth > 8 && s->filter == STRONG) {
         s->deblockh = deblockh16_strong;
         s->deblockv = deblockv16_strong;
     }
@@ -366,8 +367,20 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     return ff_filter_frame(outlink, out);
 }
 
+static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
+                           char *res, int res_len, int flags)
+{
+    int ret;
+
+    ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
+    if (ret < 0)
+        return ret;
+
+    return config_output(ctx->outputs[0]);
+}
+
 #define OFFSET(x) offsetof(DeblockContext, x)
-#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
+#define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption deblock_options[] = {
     { "filter",    "set type of filter",          OFFSET(filter),    AV_OPT_TYPE_INT,   {.i64=STRONG},0, 1,  FLAGS, "filter" },
@@ -411,4 +424,5 @@ AVFilter ff_vf_deblock = {
     .inputs        = inputs,
     .outputs       = outputs,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .process_command = process_command,
 };

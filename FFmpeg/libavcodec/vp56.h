@@ -26,6 +26,8 @@
 #ifndef AVCODEC_VP56_H
 #define AVCODEC_VP56_H
 
+#include "libavutil/mem_internal.h"
+
 #include "avcodec.h"
 #include "get_bits.h"
 #include "hpeldsp.h"
@@ -89,6 +91,7 @@ typedef struct VP56RangeCoder {
     const uint8_t *buffer;
     const uint8_t *end;
     unsigned int code_word;
+    int end_reached;
 } VP56RangeCoder;
 
 typedef struct VP56RefDc {
@@ -235,7 +238,9 @@ int ff_vp56_init_range_decoder(VP56RangeCoder *c, const uint8_t *buf, int buf_si
  */
 static av_always_inline int vpX_rac_is_end(VP56RangeCoder *c)
 {
-    return c->end <= c->buffer && c->bits >= 0;
+    if (c->end <= c->buffer && c->bits >= 0)
+        c->end_reached ++;
+    return c->end_reached > 10;
 }
 
 static av_always_inline unsigned int vp56_rac_renorm(VP56RangeCoder *c)

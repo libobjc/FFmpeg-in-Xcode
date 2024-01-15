@@ -369,7 +369,7 @@ static int decode_frame(AVCodecContext *avctx,
             bytestream2_skip(&gbc, 18);
             colors = bytestream2_get_be16(&gbc);
 
-            if (colors < 0 || colors > 256) {
+            if (colors < 0 || colors > 255) {
                 av_log(avctx, AV_LOG_ERROR,
                        "Error color count - %i(0x%X)\n", colors, colors);
                 return AVERROR_INVALIDDATA;
@@ -455,6 +455,8 @@ static int decode_frame(AVCodecContext *avctx,
                 avpriv_request_sample(avctx, "Pack type %d", pack_type);
                 return AVERROR_PATCHWELCOME;
             }
+            if (bytestream2_get_bytes_left(&gbc) < 30)
+                return AVERROR_INVALIDDATA;
             if ((ret = ff_get_buffer(avctx, p, 0)) < 0)
                 return ret;
 

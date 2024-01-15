@@ -1,5 +1,6 @@
 static const AVBitStreamFilter * const bitstream_filters[] = {
     &ff_aac_adtstoasc_bsf,
+    &ff_av1_frame_merge_bsf,
     &ff_av1_frame_split_bsf,
     &ff_av1_metadata_bsf,
     &ff_chomp_bsf,
@@ -23,8 +24,11 @@ static const AVBitStreamFilter * const bitstream_filters[] = {
     &ff_mov2textsub_bsf,
     &ff_noise_bsf,
     &ff_null_bsf,
+    &ff_opus_metadata_bsf,
+    &ff_pcm_rechunk_bsf,
     &ff_prores_metadata_bsf,
     &ff_remove_extradata_bsf,
+    &ff_setts_bsf,
     &ff_text2movsub_bsf,
     &ff_trace_headers_bsf,
     &ff_truehd_core_bsf,

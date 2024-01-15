@@ -679,7 +679,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = ctx->outputs[0];
     FieldMatchContext *fm = ctx->priv;
     int combs[] = { -1, -1, -1, -1, -1 };
-    int order, field, i, match, sc = 0;
+    int order, field, i, match, sc = 0, ret = 0;
     const int *fxo;
     AVFrame *gen_frames[] = { NULL, NULL, NULL, NULL, NULL };
     AVFrame *dst;
@@ -725,16 +725,20 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             if (i > mN && fm->combdbg == COMBDBG_PCN)
                 break;
             gen_frames[i] = create_weave_frame(ctx, i, field, fm->prv, fm->src, fm->nxt);
-            if (!gen_frames[i])
-                return AVERROR(ENOMEM);
+            if (!gen_frames[i]) {
+                ret = AVERROR(ENOMEM);
+                goto fail;
+            }
             combs[i] = calc_combed_score(fm, gen_frames[i]);
         }
         av_log(ctx, AV_LOG_INFO, "COMBS: %3d %3d %3d %3d %3d\n",
                combs[0], combs[1], combs[2], combs[3], combs[4]);
     } else {
         gen_frames[mC] = av_frame_clone(fm->src);
-        if (!gen_frames[mC])
-            return AVERROR(ENOMEM);
+        if (!gen_frames[mC]) {
+            ret = AVERROR(ENOMEM);
+            goto fail;
+        }
     }
 
     /* p/c selection and optional 3-way p/c/n matches */
@@ -801,10 +805,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             gen_frames[match] = NULL;
         }
     }
-    if (!dst)
-        return AVERROR(ENOMEM);
-    for (i = 0; i < FF_ARRAY_ELEMS(gen_frames); i++)
-        av_frame_free(&gen_frames[i]);
+    if (!dst) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
 
     /* mark the frame we are unable to match properly as interlaced so a proper
      * de-interlacer can take the relay */
@@ -819,7 +823,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
            " match=%d combed=%s\n", sc, combs[0], combs[1], combs[2], combs[3], combs[4],
            fm->combpel, match, dst->interlaced_frame ? "YES" : "NO");
 
-    return ff_filter_frame(outlink, dst);
+fail:
+    for (i = 0; i < FF_ARRAY_ELEMS(gen_frames); i++)
+        av_frame_free(&gen_frames[i]);
+
+    if (ret >= 0)
+        return ff_filter_frame(outlink, dst);
+    return ret;
 }
 
 static int activate(AVFilterContext *ctx)
@@ -828,6 +838,8 @@ static int activate(AVFilterContext *ctx)
     AVFrame *frame = NULL;
     int ret = 0, status;
     int64_t pts;
+
+    FF_FILTER_FORWARD_STATUS_BACK_ALL(ctx->outputs[0], ctx);
 
     if ((fm->got_frame[INPUT_MAIN] == 0) &&
         (ret = ff_inlink_consume_frame(ctx->inputs[INPUT_MAIN], &frame)) > 0) {
@@ -905,14 +917,14 @@ static int query_formats(AVFilterContext *ctx)
         return ff_set_common_formats(ctx, fmts_list);
     }
 
-    if ((ret = ff_formats_ref(fmts_list, &ctx->inputs[INPUT_MAIN]->out_formats)) < 0)
+    if ((ret = ff_formats_ref(fmts_list, &ctx->inputs[INPUT_MAIN]->outcfg.formats)) < 0)
         return ret;
     fmts_list = ff_make_format_list(unproc_pix_fmts);
     if (!fmts_list)
         return AVERROR(ENOMEM);
-    if ((ret = ff_formats_ref(fmts_list, &ctx->outputs[0]->in_formats)) < 0)
+    if ((ret = ff_formats_ref(fmts_list, &ctx->outputs[0]->incfg.formats)) < 0)
         return ret;
-    if ((ret = ff_formats_ref(fmts_list, &ctx->inputs[INPUT_CLEANSRC]->out_formats)) < 0)
+    if ((ret = ff_formats_ref(fmts_list, &ctx->inputs[INPUT_CLEANSRC]->outcfg.formats)) < 0)
         return ret;
     return 0;
 }
@@ -938,9 +950,9 @@ static int config_input(AVFilterLink *inlink)
     fm->tpitchy  = FFALIGN(w,      16);
     fm->tpitchuv = FFALIGN(w >> 1, 16);
 
-    fm->tbuffer = av_malloc(h/2 * fm->tpitchy);
-    fm->c_array = av_malloc((((w + fm->blockx/2)/fm->blockx)+1) *
-                            (((h + fm->blocky/2)/fm->blocky)+1) *
+    fm->tbuffer = av_calloc((h/2 + 4) * fm->tpitchy, sizeof(*fm->tbuffer));
+    fm->c_array = av_malloc_array((((w + fm->blockx/2)/fm->blockx)+1) *
+                            (((h + fm->blocky/2)/fm->blocky)+1),
                             4 * sizeof(*fm->c_array));
     if (!fm->tbuffer || !fm->c_array)
         return AVERROR(ENOMEM);
@@ -952,28 +964,20 @@ static av_cold int fieldmatch_init(AVFilterContext *ctx)
 {
     const FieldMatchContext *fm = ctx->priv;
     AVFilterPad pad = {
-        .name         = av_strdup("main"),
+        .name         = "main",
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_input,
     };
     int ret;
 
-    if (!pad.name)
-        return AVERROR(ENOMEM);
-    if ((ret = ff_insert_inpad(ctx, INPUT_MAIN, &pad)) < 0) {
-        av_freep(&pad.name);
+    if ((ret = ff_insert_inpad(ctx, INPUT_MAIN, &pad)) < 0)
         return ret;
-    }
 
     if (fm->ppsrc) {
-        pad.name = av_strdup("clean_src");
+        pad.name = "clean_src";
         pad.config_props = NULL;
-        if (!pad.name)
-            return AVERROR(ENOMEM);
-        if ((ret = ff_insert_inpad(ctx, INPUT_CLEANSRC, &pad)) < 0) {
-            av_freep(&pad.name);
+        if ((ret = ff_insert_inpad(ctx, INPUT_CLEANSRC, &pad)) < 0)
             return ret;
-        }
     }
 
     if ((fm->blockx & (fm->blockx - 1)) ||
@@ -992,7 +996,6 @@ static av_cold int fieldmatch_init(AVFilterContext *ctx)
 
 static av_cold void fieldmatch_uninit(AVFilterContext *ctx)
 {
-    int i;
     FieldMatchContext *fm = ctx->priv;
 
     if (fm->prv != fm->src)
@@ -1009,8 +1012,6 @@ static av_cold void fieldmatch_uninit(AVFilterContext *ctx)
     av_freep(&fm->cmask_data[0]);
     av_freep(&fm->tbuffer);
     av_freep(&fm->c_array);
-    for (i = 0; i < ctx->nb_inputs; i++)
-        av_freep(&ctx->input_pads[i].name);
 }
 
 static int config_output(AVFilterLink *outlink)

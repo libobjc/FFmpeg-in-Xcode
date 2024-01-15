@@ -114,6 +114,13 @@ enum {
     AV1_WARP_MODEL_TRANSLATION = 1,
     AV1_WARP_MODEL_ROTZOOM     = 2,
     AV1_WARP_MODEL_AFFINE      = 3,
+    AV1_WARP_PARAM_REDUCE_BITS = 6,
+
+    AV1_DIV_LUT_BITS      = 8,
+    AV1_DIV_LUT_PREC_BITS = 14,
+    AV1_DIV_LUT_NUM       = 257,
+
+    AV1_MAX_LOOP_FILTER = 63,
 };
 
 
@@ -158,6 +165,14 @@ enum {
     AV1_SCALABILITY_L3T3_KEY_SHIFT = 26,
     AV1_SCALABILITY_L4T5_KEY_SHIFT = 27,
     AV1_SCALABILITY_L4T7_KEY_SHIFT = 28,
+};
+
+// Frame Restoration types (section 6.10.15)
+enum {
+    AV1_RESTORE_NONE       = 0,
+    AV1_RESTORE_WIENER     = 1,
+    AV1_RESTORE_SGRPROJ    = 2,
+    AV1_RESTORE_SWITCHABLE = 3,
 };
 
 #endif /* AVCODEC_AV1_H */

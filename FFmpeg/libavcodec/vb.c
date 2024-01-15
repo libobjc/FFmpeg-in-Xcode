@@ -199,6 +199,9 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     uint32_t size;
     int offset = 0;
 
+    if (avpkt->size < 2)
+        return AVERROR_INVALIDDATA;
+
     bytestream2_init(&c->stream, avpkt->data, avpkt->size);
 
     if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
@@ -259,11 +262,8 @@ static av_cold int decode_init(AVCodecContext *avctx)
     c->frame      = av_mallocz(avctx->width * avctx->height);
     c->prev_frame = av_mallocz(avctx->width * avctx->height);
 
-    if (!c->frame || !c->prev_frame) {
-        av_freep(&c->frame);
-        av_freep(&c->prev_frame);
+    if (!c->frame || !c->prev_frame)
         return AVERROR(ENOMEM);
-    }
 
     return 0;
 }
@@ -288,4 +288,5 @@ AVCodec ff_vb_decoder = {
     .close          = decode_end,
     .decode         = decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

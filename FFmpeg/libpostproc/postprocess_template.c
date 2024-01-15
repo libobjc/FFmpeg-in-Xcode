@@ -23,6 +23,7 @@
  * mmx/mmx2/3dnow postprocess code.
  */
 
+#include "libavutil/mem_internal.h"
 #include "libavutil/x86/asm.h"
 
 /* A single TEMPLATE_PP_* should be defined (to 1) when this template is
@@ -2548,7 +2549,7 @@ static av_always_inline void RENAME(do_a_deblock)(uint8_t *src, int step, int st
     int64_t dc_mask, eq_mask, both_masks;
     int64_t sums[10*8*2];
     src+= step*3; // src points to begin of the 8x8 Block
-    //{ START_TIMER
+
     __asm__ volatile(
         "movq %0, %%mm7                         \n\t"
         "movq %1, %%mm6                         \n\t"
@@ -3071,12 +3072,6 @@ static av_always_inline void RENAME(do_a_deblock)(uint8_t *src, int step, int st
             : "%"FF_REG_a
         );
     }
-/*if(step==16){
-    STOP_TIMER("step16")
-}else{
-    STOP_TIMER("stepX")
-}
-    } */
 }
 #endif //TEMPLATE_PP_MMX
 

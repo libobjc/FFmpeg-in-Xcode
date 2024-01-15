@@ -459,6 +459,9 @@ static int decompress_p(AVCodecContext *avctx,
                 int run, bx = x * 16 + sx1, by = y * 16 + sy1;
                 uint32_t r, g, b, clr, ptype = 0;
 
+                if (bx >= avctx->width)
+                    return AVERROR_INVALIDDATA;
+
                 for (; by < y * 16 + sy2 && by < avctx->height;) {
                     ret = decode_value(s, s->op_model[ptype], 6, 1000, &ptype);
                     if (ret < 0)
@@ -504,7 +507,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
             return ret;
     }
 
-    if ((ret = ff_reget_buffer(avctx, s->current_frame)) < 0)
+    if ((ret = ff_reget_buffer(avctx, s->current_frame, 0)) < 0)
         return ret;
 
     bytestream2_init(gb, avpkt->data, avpkt->size);
@@ -532,7 +535,10 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
                             s->current_frame->linesize[0] / 4);
     } else if (type == 17 || type == 33) {
         uint32_t clr, *dst = (uint32_t *)s->current_frame->data[0];
-        int x, y;
+        int y;
+
+        if (bytestream2_get_bytes_left(gb) < 3)
+            return AVERROR_INVALIDDATA;
 
         frame->key_frame = 1;
         bytestream2_skip(gb, 1);
@@ -548,9 +554,8 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
             clr = bytestream2_get_le24(gb);
         }
         for (y = 0; y < avctx->height; y++) {
-            for (x = 0; x < avctx->width; x++) {
-                dst[x] = clr;
-            }
+            dst[0] = clr;
+            av_memcpy_backptr((uint8_t*)(dst+1), 4, 4*avctx->width - 4);
             dst += s->current_frame->linesize[0] / 4;
         }
     } else if (type == 0 || type == 1) {

@@ -73,6 +73,7 @@ typedef struct ZmbvEncContext {
     int keyint, curfrm;
     int bypp;
     enum ZmbvFormat fmt;
+    int zlib_init_ok;
     z_stream zstream;
 
     int score_tab[ZMBV_BLOCK * ZMBV_BLOCK * 4 + 1];
@@ -240,8 +241,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
                 tprev = prev + x * c->bypp;
 
                 zmbv_me(c, tsrc, p->linesize[0], tprev, c->pstride, x, y, &mx, &my, &xored);
-                mv[0] = (mx << 1) | !!xored;
-                mv[1] = my << 1;
+                mv[0] = (mx * 2) | !!xored;
+                mv[1] = my * 2;
                 tprev += mx * c->bypp + my * c->pstride;
                 if(xored){
                     for(j = 0; j < bh2; j++){
@@ -310,8 +311,9 @@ static av_cold int encode_end(AVCodecContext *avctx)
     av_freep(&c->comp_buf);
     av_freep(&c->work_buf);
 
-    deflateEnd(&c->zstream);
     av_freep(&c->prev_buf);
+    if (c->zlib_init_ok)
+        deflateEnd(&c->zstream);
 
     return 0;
 }
@@ -381,8 +383,6 @@ static av_cold int encode_init(AVCodecContext *avctx)
         return AVERROR(EINVAL);
     }
 
-    // Needed if zlib unused or init aborted before deflateInit
-    memset(&c->zstream, 0, sizeof(z_stream));
     c->comp_size = avctx->width * c->bypp * avctx->height + 1024 +
         ((avctx->width + ZMBV_BLOCK - 1) / ZMBV_BLOCK) * ((avctx->height + ZMBV_BLOCK - 1) / ZMBV_BLOCK) * 2 + 4;
     if (!(c->work_buf = av_malloc(c->comp_size))) {
@@ -409,7 +409,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
      */
     c->pstride = FFALIGN((avctx->width + c->lrange) * c->bypp, 16);
     prev_size = FFALIGN(c->lrange * c->bypp, 16) + c->pstride * (c->lrange + avctx->height + c->urange);
-    prev_offset = FFALIGN(c->lrange, 16) + c->pstride * c->lrange;
+    prev_offset = FFALIGN(c->lrange * c->bypp, 16) + c->pstride * c->lrange;
     if (!(c->prev_buf = av_mallocz(prev_size))) {
         av_log(avctx, AV_LOG_ERROR, "Can't allocate picture.\n");
         return AVERROR(ENOMEM);
@@ -424,6 +424,7 @@ static av_cold int encode_init(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_ERROR, "Inflate init error: %d\n", zret);
         return -1;
     }
+    c->zlib_init_ok = 1;
 
     return 0;
 }
@@ -445,4 +446,5 @@ AVCodec ff_zmbv_encoder = {
 #endif //ZMBV_ENABLE_24BPP
                                                      AV_PIX_FMT_BGR0,
                                                      AV_PIX_FMT_NONE },
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

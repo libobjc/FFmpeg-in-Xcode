@@ -132,8 +132,9 @@ static uint64_t get_block_sum(StreamContext *sc, uint64_t intpic[32][32], const 
     return sum;
 }
 
-static int cmp(const uint64_t *a, const uint64_t *b)
+static int cmp(const void *x, const void *y)
 {
+    const uint64_t *a = x, *b = y;
     return *a < *b ? -1 : ( *a > *b ? 1 : 0 );
 }
 
@@ -223,7 +224,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
     dw1 = inlink->w / 32;
     if (inlink->w % 32)
         dw2 = dw1 + 1;
-    denom = (sc->divide) ? dh1 * dh2 * dw1 * dw2 : 1;
+    denom = (sc->divide) ? dh1 * (int64_t)dh2 * dw1 * dw2 : 1;
 
     for (i = 0; i < 32; i++) {
         rowcount = 0;
@@ -249,7 +250,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
         }
     }
 
-    denom = (sc->divide) ? 1 : dh1 * dh2 * dw1 * dw2;
+    denom = (sc->divide) ? 1 : dh1 * (int64_t)dh2 * dw1 * dw2;
 
     for (i = 0; i < ELEMENT_COUNT; i++) {
         const ElemCat* elemcat = elements[i];
@@ -291,7 +292,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
         }
 
         /* get threshold */
-        qsort(sortsignature, elemcat->elem_count, sizeof(uint64_t), (void*) cmp);
+        qsort(sortsignature, elemcat->elem_count, sizeof(uint64_t), cmp);
         th = sortsignature[(int) (elemcat->elem_count*0.333)];
 
         /* ternarize */
@@ -317,7 +318,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
     }
 
     /* confidence */
-    qsort(conflist, DIFFELEM_SIZE, sizeof(uint64_t), (void*) cmp);
+    qsort(conflist, DIFFELEM_SIZE, sizeof(uint64_t), cmp);
     fs->confidence = FFMIN(conflist[DIFFELEM_SIZE/2], 255);
 
     /* coarsesignature */
@@ -559,7 +560,6 @@ static int binary_export(AVFilterContext *ctx, StreamContext *sc, const char* fi
         }
     }
 
-    avpriv_align_put_bits(&buf);
     flush_put_bits(&buf);
     fwrite(buffer, 1, put_bits_count(&buf)/8, f);
     fclose(f);
@@ -664,6 +664,10 @@ static av_cold int init(AVFilterContext *ctx)
 
         if (!pad.name)
             return AVERROR(ENOMEM);
+        if ((ret = ff_insert_inpad(ctx, i, &pad)) < 0) {
+            av_freep(&pad.name);
+            return ret;
+        }
 
         sc = &(sic->streamcontexts[i]);
 
@@ -680,11 +684,6 @@ static av_cold int init(AVFilterContext *ctx)
         sc->coarseend = sc->coarsesiglist;
         sc->coarsecount = 0;
         sc->midcoarse = 0;
-
-        if ((ret = ff_insert_inpad(ctx, i, &pad)) < 0) {
-            av_freep(&pad.name);
-            return ret;
-        }
     }
 
     /* check filename */
@@ -731,6 +730,8 @@ static av_cold void uninit(AVFilterContext *ctx)
         }
         av_freep(&sic->streamcontexts);
     }
+    for (unsigned i = 0; i < ctx->nb_inputs; i++)
+        av_freep(&ctx->input_pads[i].name);
 }
 
 static int config_output(AVFilterLink *outlink)

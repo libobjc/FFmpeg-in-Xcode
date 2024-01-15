@@ -43,7 +43,7 @@ typedef struct SwapRectContext {
 } SwapRectContext;
 
 #define OFFSET(x) offsetof(SwapRectContext, x)
-#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
+#define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 static const AVOption swaprect_options[] = {
     { "w",  "set rect width",                     OFFSET(w),  AV_OPT_TYPE_STRING, {.str="w/2"}, 0, 0, .flags = FLAGS },
     { "h",  "set rect height",                    OFFSET(h),  AV_OPT_TYPE_STRING, {.str="h/2"}, 0, 0, .flags = FLAGS },
@@ -99,7 +99,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     var_values[VAR_DAR] = var_values[VAR_A] * var_values[VAR_SAR];
     var_values[VAR_N]   = inlink->frame_count_out;
     var_values[VAR_T]   = in->pts == AV_NOPTS_VALUE ? NAN : in->pts * av_q2d(inlink->time_base);
-    var_values[VAR_POS] = in->pkt_pos ? NAN : in->pkt_pos;
+    var_values[VAR_POS] = in->pkt_pos == -1 ? NAN : in->pkt_pos;
 
     ret = av_expr_parse_and_eval(&dw, s->w,
                                  var_names, &var_values[0],
@@ -253,4 +253,5 @@ AVFilter ff_vf_swaprect = {
     .inputs        = inputs,
     .outputs       = outputs,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .process_command = ff_filter_process_command,
 };

@@ -27,7 +27,6 @@
 #ifndef AVCODEC_AC3_H
 #define AVCODEC_AC3_H
 
-#define AC3_MAX_CODED_FRAME_SIZE 3840 /* in bytes */
 #define EAC3_MAX_CHANNELS 16          /**< maximum number of channels in EAC3 */
 #define AC3_MAX_CHANNELS 7            /**< maximum number of channels, including coupling channel */
 #define CPL_CH 0                      /**< coupling channel index */
@@ -75,6 +74,7 @@
 #define AC3_DYNAMIC_RANGE1      0
 
 typedef int                     INTFLOAT;
+typedef unsigned int            UINTFLOAT;
 typedef int16_t                 SHORTFLOAT;
 
 #else /* USE_FIXED */
@@ -94,6 +94,7 @@ typedef int16_t                 SHORTFLOAT;
 #define AC3_DYNAMIC_RANGE1      1.0f
 
 typedef float                   INTFLOAT;
+typedef float                   UINTFLOAT;
 typedef float                   SHORTFLOAT;
 
 #endif /* USE_FIXED */

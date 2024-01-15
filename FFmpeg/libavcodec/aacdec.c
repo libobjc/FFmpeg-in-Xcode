@@ -69,6 +69,11 @@
 #   include "mips/aacdec_mips.h"
 #endif
 
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(sine_120))[120];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(sine_960))[960];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(aac_kbd_long_960))[960];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(aac_kbd_short_120))[120];
+
 static av_always_inline void reset_predict_state(PredictorState *ps)
 {
     ps->r0   = 0.0f;
@@ -409,6 +414,8 @@ static int read_stream_mux_config(struct LATMContext *latmctx,
             } else {
                 int esc;
                 do {
+                    if (get_bits_left(gb) < 9)
+                        return AVERROR_INVALIDDATA;
                     esc = get_bits(gb, 1);
                     skip_bits(gb, 8);
                 } while (esc);
@@ -559,7 +566,7 @@ AVCodec ff_aac_decoder = {
         AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_NONE
     },
     .capabilities    = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
-    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE,
+    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
     .channel_layouts = aac_channel_layout,
     .flush = flush,
     .priv_class      = &aac_decoder_class,
@@ -584,7 +591,7 @@ AVCodec ff_aac_latm_decoder = {
         AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_NONE
     },
     .capabilities    = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
-    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE,
+    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
     .channel_layouts = aac_channel_layout,
     .flush = flush,
     .profiles        = NULL_IF_CONFIG_SMALL(ff_aac_profiles),

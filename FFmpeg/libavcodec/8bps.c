@@ -70,6 +70,9 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     unsigned char *planemap = c->planemap;
     int ret;
 
+    if (buf_size < planes * height *2)
+        return AVERROR_INVALIDDATA;
+
     if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
         return ret;
 
@@ -122,7 +125,7 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     }
 
     if (avctx->bits_per_coded_sample <= 8) {
-        int size;
+        buffer_size_t size;
         const uint8_t *pal = av_packet_get_side_data(avpkt,
                                                      AV_PKT_DATA_PALETTE,
                                                      &size);

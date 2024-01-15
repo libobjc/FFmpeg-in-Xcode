@@ -175,7 +175,7 @@ static int query_formats(AVFilterContext *ctx)
     if (ret)
         return ret;
 
-    ret = ff_channel_layouts_ref(layouts, &ctx->outputs[0]->in_channel_layouts);
+    ret = ff_channel_layouts_ref(layouts, &ctx->outputs[0]->incfg.channel_layouts);
     if (ret)
         return ret;
 
@@ -184,7 +184,7 @@ static int query_formats(AVFilterContext *ctx)
     if (ret)
         return ret;
 
-    ret = ff_channel_layouts_ref(layouts, &ctx->inputs[0]->out_channel_layouts);
+    ret = ff_channel_layouts_ref(layouts, &ctx->inputs[0]->outcfg.channel_layouts);
     if (ret)
         return ret;
 
@@ -203,13 +203,13 @@ static int config_input(AVFilterLink *inlink)
     s->rdft = av_calloc(inlink->channels, sizeof(*s->rdft));
     if (!s->rdft)
         return AVERROR(ENOMEM);
+    s->nb_in_channels = inlink->channels;
 
     for (ch = 0; ch < inlink->channels; ch++) {
         s->rdft[ch]  = av_rdft_init(ff_log2(s->buf_size), DFT_R2C);
         if (!s->rdft[ch])
             return AVERROR(ENOMEM);
     }
-    s->nb_in_channels = inlink->channels;
     s->input_levels = av_malloc_array(s->nb_in_channels, sizeof(*s->input_levels));
     if (!s->input_levels)
         return AVERROR(ENOMEM);
@@ -266,13 +266,13 @@ static int config_output(AVFilterLink *outlink)
     s->irdft = av_calloc(outlink->channels, sizeof(*s->irdft));
     if (!s->irdft)
         return AVERROR(ENOMEM);
+    s->nb_out_channels = outlink->channels;
 
     for (ch = 0; ch < outlink->channels; ch++) {
         s->irdft[ch] = av_rdft_init(ff_log2(s->buf_size), IDFT_C2R);
         if (!s->irdft[ch])
             return AVERROR(ENOMEM);
     }
-    s->nb_out_channels = outlink->channels;
     s->output_levels = av_malloc_array(s->nb_out_channels, sizeof(*s->output_levels));
     if (!s->output_levels)
         return AVERROR(ENOMEM);
@@ -1372,7 +1372,7 @@ static void filter_5_1_back(AVFilterContext *ctx)
     }
 }
 
-static int init(AVFilterContext *ctx)
+static av_cold int init(AVFilterContext *ctx)
 {
     AudioSurroundContext *s = ctx->priv;
     float overlap;

@@ -42,10 +42,12 @@ typedef struct GraphMonitorContext {
     AVRational frame_rate;
 
     int64_t pts;
+    int64_t next_pts;
     uint8_t white[4];
     uint8_t yellow[4];
     uint8_t red[4];
     uint8_t green[4];
+    uint8_t blue[4];
     uint8_t bg[4];
 } GraphMonitorContext;
 
@@ -59,6 +61,7 @@ enum {
     MODE_FMT   = 1 << 6,
     MODE_SIZE  = 1 << 7,
     MODE_RATE  = 1 << 8,
+    MODE_EOF   = 1 << 9,
 };
 
 #define OFFSET(x) offsetof(GraphMonitorContext, x)
@@ -84,6 +87,7 @@ static const AVOption graphmonitor_options[] = {
         { "format",           NULL, 0, AV_OPT_TYPE_CONST, {.i64=MODE_FMT},     0, 0, VF, "flags" },
         { "size",             NULL, 0, AV_OPT_TYPE_CONST, {.i64=MODE_SIZE},    0, 0, VF, "flags" },
         { "rate",             NULL, 0, AV_OPT_TYPE_CONST, {.i64=MODE_RATE},    0, 0, VF, "flags" },
+        { "eof",              NULL, 0, AV_OPT_TYPE_CONST, {.i64=MODE_EOF},     0, 0, VF, "flags" },
     { "rate", "set video rate", OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str = "25"}, 0, INT_MAX, VF },
     { "r",    "set video rate", OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str = "25"}, 0, INT_MAX, VF },
     { NULL }
@@ -99,7 +103,7 @@ static int query_formats(AVFilterContext *ctx)
     int ret;
 
     AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if ((ret = ff_formats_ref(fmts_list, &outlink->in_formats)) < 0)
+    if ((ret = ff_formats_ref(fmts_list, &outlink->incfg.formats)) < 0)
         return ret;
 
     return 0;
@@ -235,6 +239,11 @@ static void draw_items(AVFilterContext *ctx, AVFrame *out,
         drawtext(out, xpos, ypos, buffer, s->white);
         xpos += strlen(buffer) * 8;
     }
+    if (s->flags & MODE_EOF && ff_outlink_get_status(l)) {
+        snprintf(buffer, sizeof(buffer)-1, " | eof");
+        drawtext(out, xpos, ypos, buffer, s->blue);
+        xpos += strlen(buffer) * 8;
+    }
 }
 
 static int create_frame(AVFilterContext *ctx, int64_t pts)
@@ -300,7 +309,7 @@ static int create_frame(AVFilterContext *ctx, int64_t pts)
     }
 
     out->pts = pts;
-    s->pts = pts;
+    s->pts = pts + 1;
     return ff_filter_frame(outlink, out);
 }
 
@@ -328,9 +337,13 @@ static int activate(AVFilterContext *ctx)
 
     if (pts != AV_NOPTS_VALUE) {
         pts = av_rescale_q(pts, inlink->time_base, outlink->time_base);
-        if (s->pts < pts && ff_outlink_frame_wanted(outlink))
-            return create_frame(ctx, pts);
+        if (s->pts == AV_NOPTS_VALUE)
+            s->pts = pts;
+        s->next_pts = pts;
     }
+
+    if (s->pts < s->next_pts && ff_outlink_frame_wanted(outlink))
+        return create_frame(ctx, s->pts);
 
     FF_FILTER_FORWARD_STATUS(inlink, outlink);
     FF_FILTER_FORWARD_WANTED(outlink, inlink);
@@ -347,6 +360,9 @@ static int config_output(AVFilterLink *outlink)
     s->yellow[0] = s->yellow[1] = 255;
     s->red[0] = 255;
     s->green[1] = 255;
+    s->blue[2] = 255;
+    s->pts = AV_NOPTS_VALUE;
+    s->next_pts = AV_NOPTS_VALUE;
     outlink->w = s->w;
     outlink->h = s->h;
     outlink->sample_aspect_ratio = (AVRational){1,1};

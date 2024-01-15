@@ -61,7 +61,7 @@ enum correction_method {
     NB_CORRECTION_METHODS,
 };
 
-static const char *color_names[NB_RANGES] = {
+static const char *const color_names[NB_RANGES] = {
     "red", "yellow", "green", "cyan", "blue", "magenta", "white", "neutral", "black"
 };
 
@@ -93,7 +93,7 @@ typedef struct SelectiveColorContext {
 #define OFFSET(x) offsetof(SelectiveColorContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 #define RANGE_OPTION(color_name, range) \
-    { color_name"s", "adjust "color_name" regions", OFFSET(opt_cmyk_adjust[range]), AV_OPT_TYPE_STRING, {.str=NULL}, CHAR_MIN, CHAR_MAX, FLAGS }
+    { color_name"s", "adjust "color_name" regions", OFFSET(opt_cmyk_adjust[range]), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS }
 
 static const AVOption selectivecolor_options[] = {
     { "correction_method", "select correction method", OFFSET(correction_method), AV_OPT_TYPE_INT, {.i64 = CORRECTION_METHOD_ABSOLUTE}, 0, NB_CORRECTION_METHODS-1, FLAGS, "correction_method" },

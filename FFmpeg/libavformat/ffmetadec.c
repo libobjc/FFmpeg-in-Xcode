@@ -101,19 +101,22 @@ static AVChapter *read_chapter(AVFormatContext *s)
     uint8_t line[256];
     int64_t start, end;
     AVRational tb = {1, 1e9};
+    int ret;
 
     get_line(s->pb, line, sizeof(line));
 
     if (sscanf(line, "TIMEBASE=%d/%d", &tb.num, &tb.den))
         get_line(s->pb, line, sizeof(line));
-    if (!sscanf(line, "START=%"SCNd64, &start)) {
+    ret = sscanf(line, "START=%"SCNd64, &start);
+    if (ret <= 0) {
         av_log(s, AV_LOG_ERROR, "Expected chapter start timestamp, found %s.\n", line);
         start = (s->nb_chapters && s->chapters[s->nb_chapters - 1]->end != AV_NOPTS_VALUE) ?
                  s->chapters[s->nb_chapters - 1]->end : 0;
     } else
         get_line(s->pb, line, sizeof(line));
 
-    if (!sscanf(line, "END=%"SCNd64, &end)) {
+    ret = sscanf(line, "END=%"SCNd64, &end);
+    if (ret <= 0) {
         av_log(s, AV_LOG_ERROR, "Expected chapter end timestamp, found %s.\n", line);
         end = AV_NOPTS_VALUE;
     }
@@ -182,7 +185,7 @@ static int read_header(AVFormatContext *s)
             AVStream *st = avformat_new_stream(s, NULL);
 
             if (!st)
-                return AVERROR(ENOMEM);
+                goto nomem;
 
             st->codecpar->codec_type = AVMEDIA_TYPE_DATA;
             st->codecpar->codec_id   = AV_CODEC_ID_FFMETADATA;
@@ -192,7 +195,7 @@ static int read_header(AVFormatContext *s)
             AVChapter *ch = read_chapter(s);
 
             if (!ch)
-                return AVERROR(ENOMEM);
+                goto nomem;
 
             m = &ch->metadata;
         } else
@@ -208,6 +211,10 @@ static int read_header(AVFormatContext *s)
                                    AV_TIME_BASE_Q);
 
     return 0;
+nomem:
+    av_bprint_finalize(&bp, NULL);
+
+    return AVERROR(ENOMEM);
 }
 
 static int read_packet(AVFormatContext *s, AVPacket *pkt)
