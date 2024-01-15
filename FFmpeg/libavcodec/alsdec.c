@@ -34,6 +34,7 @@
 #include "bgmc.h"
 #include "bswapdsp.h"
 #include "codec_internal.h"
+#include "decode.h"
 #include "internal.h"
 #include "mlz.h"
 #include "libavutil/samplefmt.h"
@@ -2181,7 +2182,7 @@ static av_cold void flush(AVCodecContext *avctx)
 
 const FFCodec ff_als_decoder = {
     .p.name         = "als",
-    .p.long_name    = NULL_IF_CONFIG_SMALL("MPEG-4 Audio Lossless Coding (ALS)"),
+    CODEC_LONG_NAME("MPEG-4 Audio Lossless Coding (ALS)"),
     .p.type         = AVMEDIA_TYPE_AUDIO,
     .p.id           = AV_CODEC_ID_MP4ALS,
     .priv_data_size = sizeof(ALSDecContext),
@@ -2189,6 +2190,10 @@ const FFCodec ff_als_decoder = {
     .close          = decode_end,
     FF_CODEC_DECODE_CB(decode_frame),
     .flush          = flush,
-    .p.capabilities = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+    .p.capabilities =
+#if FF_API_SUBFRAMES
+                      AV_CODEC_CAP_SUBFRAMES |
+#endif
+                      AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

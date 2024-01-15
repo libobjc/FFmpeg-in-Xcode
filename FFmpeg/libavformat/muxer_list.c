@@ -1,6 +1,7 @@
-static const AVOutputFormat * const muxer_list[] = {
+static const FFOutputFormat * const muxer_list[] = {
     &ff_a64_muxer,
     &ff_ac3_muxer,
+    &ff_ac4_muxer,
     &ff_adts_muxer,
     &ff_adx_muxer,
     &ff_aiff_muxer,
@@ -38,6 +39,7 @@ static const AVOutputFormat * const muxer_list[] = {
     &ff_dts_muxer,
     &ff_dv_muxer,
     &ff_eac3_muxer,
+    &ff_evc_muxer,
     &ff_f4v_muxer,
     &ff_ffmetadata_muxer,
     &ff_fifo_muxer,
@@ -162,6 +164,7 @@ static const AVOutputFormat * const muxer_list[] = {
     &ff_vc1_muxer,
     &ff_vc1t_muxer,
     &ff_voc_muxer,
+    &ff_vvc_muxer,
     &ff_w64_muxer,
     &ff_wav_muxer,
     &ff_webm_muxer,

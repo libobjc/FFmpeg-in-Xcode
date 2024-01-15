@@ -5,6 +5,7 @@ static const URLProtocol * const url_protocols[] = {
     &ff_concatf_protocol,
     &ff_crypto_protocol,
     &ff_data_protocol,
+    &ff_fd_protocol,
     &ff_ffrtmphttp_protocol,
     &ff_file_protocol,
     &ff_ftp_protocol,
@@ -33,6 +34,6 @@ static const URLProtocol * const url_protocols[] = {
     &ff_udp_protocol,
     &ff_udplite_protocol,
     &ff_unix_protocol,
-    &ff_ipfs_protocol,
-    &ff_ipns_protocol,
+    &ff_ipfs_gateway_protocol,
+    &ff_ipns_gateway_protocol,
     NULL };

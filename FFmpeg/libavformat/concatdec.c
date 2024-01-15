@@ -25,6 +25,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/timestamp.h"
+#include "libavcodec/codec_desc.h"
 #include "libavcodec/bsf.h"
 #include "avformat.h"
 #include "avio_internal.h"
@@ -180,8 +181,9 @@ static int copy_stream_props(AVStream *st, AVStream *source_st)
             if (ret < 0)
                 return ret;
         }
-        memcpy(st->codecpar->extradata, source_st->codecpar->extradata,
-               source_st->codecpar->extradata_size);
+        if (source_st->codecpar->extradata_size)
+            memcpy(st->codecpar->extradata, source_st->codecpar->extradata,
+                   source_st->codecpar->extradata_size);
         return 0;
     }
     if ((ret = avcodec_parameters_copy(st->codecpar, source_st->codecpar)) < 0)
@@ -192,7 +194,6 @@ static int copy_stream_props(AVStream *st, AVStream *source_st)
     avpriv_set_pts_info(st, 64, source_st->time_base.num, source_st->time_base.den);
 
     av_dict_copy(&st->metadata, source_st->metadata, 0);
-    ff_stream_side_data_copy(st, source_st);
     return 0;
 }
 
