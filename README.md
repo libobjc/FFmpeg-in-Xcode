@@ -4,7 +4,7 @@
 
 ## Condition
 
-- FFmpeg : 4.2
+- FFmpeg : 4.4.4
 - SDL : 2.28.5
 - Xcode : 14.3.1
 - configuration  : --disable-asm --disable-lzma
