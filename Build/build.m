@@ -139,6 +139,18 @@ int main(int argc, const char * argv[]) {
             SGFReplace(SGFAppend(d, @"libavfilter/vsrc_mandelbrot.c"),
                        @"typedef struct Point {",
                        @"// Edit by Single\ntypedef struct {");
+            SGFReplace(SGFAppend(d, @"libavdevice/sdl2.c"),
+                       @"#include <SDL.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL.h>");
+            SGFReplace(SGFAppend(d, @"libavdevice/sdl2.c"),
+                       @"#include <SDL_thread.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL_thread.h>");
+            SGFReplace(SGFAppend(d, @"fftools/ffplay.c"),
+                       @"#include <SDL.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL.h>");
+            SGFReplace(SGFAppend(d, @"fftools/ffplay.c"),
+                       @"#include <SDL_thread.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL_thread.h>");
         }
     }
     return 0;
