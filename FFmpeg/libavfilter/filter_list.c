@@ -382,7 +382,6 @@ static const AVFilter * const filter_list[] = {
     &ff_vf_xmedian,
     &ff_vf_xstack,
     &ff_vf_yadif,
-//    &ff_vf_yadif_videotoolbox,
     &ff_vf_yaepblur,
     &ff_vf_zoompan,
     &ff_vsrc_allrgb,
