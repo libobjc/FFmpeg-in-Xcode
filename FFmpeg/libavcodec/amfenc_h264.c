@@ -20,6 +20,7 @@
 #include "libavutil/internal.h"
 #include "libavutil/opt.h"
 #include "amfenc.h"
+#include "codec_internal.h"
 #include "internal.h"
 
 #define OFFSET(x) offsetof(AmfContext, x)
@@ -358,7 +359,7 @@ static av_cold int amf_encode_init_h264(AVCodecContext *avctx)
     return 0;
 }
 
-static const AVCodecDefault defaults[] = {
+static const FFCodecDefault defaults[] = {
     { "refs",       "-1"  },
     { "aspect",     "0"   },
     { "qmin",       "-1"  },
@@ -366,6 +367,7 @@ static const AVCodecDefault defaults[] = {
     { "b",          "2M"  },
     { "g",          "250" },
     { "slices",     "1"   },
+    { "flags",      "+loop"},
     { NULL                },
 };
 
@@ -376,20 +378,21 @@ static const AVClass h264_amf_class = {
     .version = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_h264_amf_encoder = {
-    .name           = "h264_amf",
-    .long_name      = NULL_IF_CONFIG_SMALL("AMD AMF H.264 Encoder"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_H264,
+const FFCodec ff_h264_amf_encoder = {
+    .p.name         = "h264_amf",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("AMD AMF H.264 Encoder"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H264,
     .init           = amf_encode_init_h264,
-    .send_frame     = ff_amf_send_frame,
-    .receive_packet = ff_amf_receive_packet,
+    FF_CODEC_RECEIVE_PACKET_CB(ff_amf_receive_packet),
     .close          = ff_amf_encode_close,
     .priv_data_size = sizeof(AmfContext),
-    .priv_class     = &h264_amf_class,
+    .p.priv_class   = &h264_amf_class,
     .defaults       = defaults,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE |
+                      AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .pix_fmts       = ff_amf_pix_fmts,
-    .wrapper_name   = "amf",
+    .p.pix_fmts     = ff_amf_pix_fmts,
+    .p.wrapper_name = "amf",
+    .hw_configs     = ff_amfenc_hw_configs,
 };

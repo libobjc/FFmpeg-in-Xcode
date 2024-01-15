@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/attributes.h"
 #include "libavutil/common.h"
 #include "libavutil/eval.h"
@@ -79,12 +81,13 @@ typedef struct ThreadData {
 
 #define OFFSET(x) offsetof(LUT2Context, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
+#define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption options[] = {
-    { "c0", "set component #0 expression", OFFSET(comp_expr_str[0]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c1", "set component #1 expression", OFFSET(comp_expr_str[1]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c2", "set component #2 expression", OFFSET(comp_expr_str[2]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c3", "set component #3 expression", OFFSET(comp_expr_str[3]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
+    { "c0", "set component #0 expression", OFFSET(comp_expr_str[0]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c1", "set component #1 expression", OFFSET(comp_expr_str[1]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c2", "set component #2 expression", OFFSET(comp_expr_str[2]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c3", "set component #3 expression", OFFSET(comp_expr_str[3]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
     { "d",  "set output depth",            OFFSET(odepth),            AV_OPT_TYPE_INT,    { .i64 =  0  }, 0, 16, .flags = FLAGS },
     { NULL }
 };
@@ -125,11 +128,12 @@ static av_cold void uninit(AVFilterContext *ctx)
 
 #define BIT12_FMTS \
     AV_PIX_FMT_YUV420P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV440P12, \
+    AV_PIX_FMT_YUVA422P12, AV_PIX_FMT_YUVA444P12, \
     AV_PIX_FMT_GRAY12, AV_PIX_FMT_GBRAP12, AV_PIX_FMT_GBRP12,
 
 #define BIT14_FMTS \
     AV_PIX_FMT_YUV420P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV444P14, \
-    AV_PIX_FMT_GRAY12, AV_PIX_FMT_GBRP14,
+    AV_PIX_FMT_GRAY14, AV_PIX_FMT_GBRP14,
 
 #define BIT16_FMTS \
     AV_PIX_FMT_YUV420P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV444P16, \
@@ -174,9 +178,9 @@ static int query_formats(AVFilterContext *ctx)
     int ret;
 
     if (s->tlut2 || !s->odepth)
-        return ff_set_common_formats(ctx, ff_make_format_list(all_pix_fmts));
+        return ff_set_common_formats_from_list(ctx, all_pix_fmts);
 
-    ret = ff_formats_ref(ff_make_format_list(all_pix_fmts), &ctx->inputs[0]->out_formats);
+    ret = ff_formats_ref(ff_make_format_list(all_pix_fmts), &ctx->inputs[0]->outcfg.formats);
     if (ret < 0)
         return ret;
 
@@ -191,7 +195,7 @@ static int query_formats(AVFilterContext *ctx)
              return AVERROR(EINVAL);
     }
 
-    return ff_formats_ref(ff_make_format_list(pix_fmts), &ctx->outputs[0]->in_formats);
+    return ff_formats_ref(ff_make_format_list(pix_fmts), &ctx->outputs[0]->incfg.formats);
 }
 
 static int config_inputx(AVFilterLink *inlink)
@@ -314,7 +318,8 @@ static int process_frame(FFFrameSync *fs)
         td.out  = out;
         td.srcx = srcx;
         td.srcy = srcy;
-        ctx->internal->execute(ctx, s->lut2, &td, NULL, FFMIN(s->heightx[1], ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, s->lut2, &td, NULL,
+                          FFMIN(s->heightx[1], ff_filter_get_nb_threads(ctx)));
     }
 
     out->pts = av_rescale_q(s->fs.pts, s->fs.time_base, outlink->time_base);
@@ -352,7 +357,8 @@ static int config_output(AVFilterLink *outlink)
     }
 
     for (p = 0; p < s->nb_planes; p++) {
-        s->lut[p] = av_malloc_array(1 << s->depth, sizeof(uint16_t));
+        if (!s->lut[p])
+            s->lut[p] = av_malloc_array(1 << s->depth, sizeof(uint16_t));
         if (!s->lut[p])
             return AVERROR(ENOMEM);
     }
@@ -530,7 +536,6 @@ static const AVFilterPad inputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_inputy,
     },
-    { NULL }
 };
 
 static const AVFilterPad outputs[] = {
@@ -539,26 +544,37 @@ static const AVFilterPad outputs[] = {
         .type          = AVMEDIA_TYPE_VIDEO,
         .config_props  = lut2_config_output,
     },
-    { NULL }
 };
+
+static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
+                           char *res, int res_len, int flags)
+{
+    int ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
+
+    if (ret < 0)
+        return ret;
+
+    return config_output(ctx->outputs[0]);
+}
 
 #define lut2_options options
 
 FRAMESYNC_DEFINE_CLASS(lut2, LUT2Context, fs);
 
-AVFilter ff_vf_lut2 = {
+const AVFilter ff_vf_lut2 = {
     .name          = "lut2",
     .description   = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two video inputs."),
     .preinit       = lut2_framesync_preinit,
     .priv_size     = sizeof(LUT2Context),
     .priv_class    = &lut2_class,
     .uninit        = uninit,
-    .query_formats = query_formats,
     .activate      = activate,
-    .inputs        = inputs,
-    .outputs       = outputs,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
+    FILTER_QUERY_FUNC(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
                      AVFILTER_FLAG_SLICE_THREADS,
+    .process_command = process_command,
 };
 
 #if CONFIG_TLUT2_FILTER
@@ -598,7 +614,8 @@ static int tlut2_filter_frame(AVFilterLink *inlink, AVFrame *frame)
             td.out  = out;
             td.srcx = frame;
             td.srcy = s->prev_frame;
-            ctx->internal->execute(ctx, s->lut2, &td, NULL, FFMIN(s->heightx[1], ff_filter_get_nb_threads(ctx)));
+            ff_filter_execute(ctx, s->lut2, &td, NULL,
+                              FFMIN(s->heightx[1], ff_filter_get_nb_threads(ctx)));
         }
         av_frame_free(&s->prev_frame);
         s->prev_frame = frame;
@@ -609,10 +626,10 @@ static int tlut2_filter_frame(AVFilterLink *inlink, AVFrame *frame)
 }
 
 static const AVOption tlut2_options[] = {
-    { "c0", "set component #0 expression", OFFSET(comp_expr_str[0]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c1", "set component #1 expression", OFFSET(comp_expr_str[1]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c2", "set component #2 expression", OFFSET(comp_expr_str[2]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
-    { "c3", "set component #3 expression", OFFSET(comp_expr_str[3]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = FLAGS },
+    { "c0", "set component #0 expression", OFFSET(comp_expr_str[0]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c1", "set component #1 expression", OFFSET(comp_expr_str[1]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c2", "set component #2 expression", OFFSET(comp_expr_str[2]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
+    { "c3", "set component #3 expression", OFFSET(comp_expr_str[3]),  AV_OPT_TYPE_STRING, { .str = "x" }, .flags = TFLAGS },
     { NULL }
 };
 
@@ -625,7 +642,6 @@ static const AVFilterPad tlut2_inputs[] = {
         .filter_frame  = tlut2_filter_frame,
         .config_props  = config_inputx,
     },
-    { NULL }
 };
 
 static const AVFilterPad tlut2_outputs[] = {
@@ -634,21 +650,21 @@ static const AVFilterPad tlut2_outputs[] = {
         .type          = AVMEDIA_TYPE_VIDEO,
         .config_props  = config_output,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_tlut2 = {
+const AVFilter ff_vf_tlut2 = {
     .name          = "tlut2",
     .description   = NULL_IF_CONFIG_SMALL("Compute and apply a lookup table from two successive frames."),
     .priv_size     = sizeof(LUT2Context),
     .priv_class    = &tlut2_class,
-    .query_formats = query_formats,
     .init          = init,
     .uninit        = uninit,
-    .inputs        = tlut2_inputs,
-    .outputs       = tlut2_outputs,
+    FILTER_INPUTS(tlut2_inputs),
+    FILTER_OUTPUTS(tlut2_outputs),
+    FILTER_QUERY_FUNC(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
                      AVFILTER_FLAG_SLICE_THREADS,
+    .process_command = process_command,
 };
 
 #endif

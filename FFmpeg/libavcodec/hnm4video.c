@@ -28,6 +28,7 @@
 #include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "internal.h"
 
 #define HNM4_CHUNK_ID_PL 19536
@@ -63,7 +64,7 @@ static int getbit(GetByteContext *gb, uint32_t *bitbuf, int *bits)
     return ret;
 }
 
-static void unpack_intraframe(AVCodecContext *avctx, uint8_t *src,
+static void unpack_intraframe(AVCodecContext *avctx, const uint8_t *src,
                               uint32_t size)
 {
     Hnm4VideoContext *hnm = avctx->priv_data;
@@ -117,14 +118,17 @@ static void unpack_intraframe(AVCodecContext *avctx, uint8_t *src,
 static void postprocess_current_frame(AVCodecContext *avctx)
 {
     Hnm4VideoContext *hnm = avctx->priv_data;
-    uint32_t x, y, src_x, src_y;
+    uint32_t x, y, src_y;
+    int width = hnm->width;
 
     for (y = 0; y < hnm->height; y++) {
+        uint8_t *dst = hnm->processed + y * width;
+        const uint8_t *src = hnm->current;
         src_y = y - (y % 2);
-        src_x = src_y * hnm->width + (y % 2);
-        for (x = 0; x < hnm->width; x++) {
-            hnm->processed[(y * hnm->width) + x] = hnm->current[src_x];
-            src_x += 2;
+        src += src_y * width + (y % 2);
+        for (x = 0; x < width; x++) {
+            dst[x] = *src;
+            src += 2;
         }
     }
 }
@@ -143,7 +147,7 @@ static void copy_processed_frame(AVCodecContext *avctx, AVFrame *frame)
     }
 }
 
-static int decode_interframe_v4(AVCodecContext *avctx, uint8_t *src, uint32_t size)
+static int decode_interframe_v4(AVCodecContext *avctx, const uint8_t *src, uint32_t size)
 {
     Hnm4VideoContext *hnm = avctx->priv_data;
     GetByteContext gb;
@@ -272,7 +276,7 @@ static int decode_interframe_v4(AVCodecContext *avctx, uint8_t *src, uint32_t si
     return 0;
 }
 
-static void decode_interframe_v4a(AVCodecContext *avctx, uint8_t *src,
+static void decode_interframe_v4a(AVCodecContext *avctx, const uint8_t *src,
                                   uint32_t size)
 {
     Hnm4VideoContext *hnm = avctx->priv_data;
@@ -351,7 +355,7 @@ static void decode_interframe_v4a(AVCodecContext *avctx, uint8_t *src,
     }
 }
 
-static void hnm_update_palette(AVCodecContext *avctx, uint8_t *src,
+static void hnm_update_palette(AVCodecContext *avctx, const uint8_t *src,
                                uint32_t size)
 {
     Hnm4VideoContext *hnm = avctx->priv_data;
@@ -384,19 +388,9 @@ static void hnm_update_palette(AVCodecContext *avctx, uint8_t *src,
     }
 }
 
-static void hnm_flip_buffers(Hnm4VideoContext *hnm)
-{
-    uint8_t *temp;
-
-    temp          = hnm->current;
-    hnm->current  = hnm->previous;
-    hnm->previous = temp;
-}
-
-static int hnm_decode_frame(AVCodecContext *avctx, void *data,
+static int hnm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                             int *got_frame, AVPacket *avpkt)
 {
-    AVFrame *frame = data;
     Hnm4VideoContext *hnm = avctx->priv_data;
     int ret;
     uint16_t chunk_id;
@@ -447,7 +441,7 @@ static int hnm_decode_frame(AVCodecContext *avctx, void *data,
         frame->key_frame = 0;
         memcpy(frame->data[1], hnm->palette, 256 * 4);
         *got_frame = 1;
-        hnm_flip_buffers(hnm);
+        FFSWAP(uint8_t *, hnm->current, hnm->previous);
     } else {
         av_log(avctx, AV_LOG_ERROR, "invalid chunk id: %d\n", chunk_id);
         return AVERROR_INVALIDDATA;
@@ -470,6 +464,8 @@ static av_cold int hnm_decode_init(AVCodecContext *avctx)
     ret = av_image_check_size(avctx->width, avctx->height, 0, avctx);
     if (ret < 0)
         return ret;
+    if (avctx->height & 1)
+        return AVERROR(EINVAL);
 
     hnm->version   = avctx->extradata[0];
     avctx->pix_fmt = AV_PIX_FMT_PAL8;
@@ -479,13 +475,8 @@ static av_cold int hnm_decode_init(AVCodecContext *avctx)
     hnm->buffer2   = av_mallocz(avctx->width * avctx->height);
     hnm->processed = av_mallocz(avctx->width * avctx->height);
 
-    if (   !hnm->buffer1 || !hnm->buffer2 || !hnm->processed
-        || avctx->width * avctx->height == 0
-        || avctx->height % 2) {
+    if (!hnm->buffer1 || !hnm->buffer2 || !hnm->processed) {
         av_log(avctx, AV_LOG_ERROR, "av_mallocz() failed\n");
-        av_freep(&hnm->buffer1);
-        av_freep(&hnm->buffer2);
-        av_freep(&hnm->processed);
         return AVERROR(ENOMEM);
     }
 
@@ -506,14 +497,15 @@ static av_cold int hnm_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_hnm4_video_decoder = {
-    .name           = "hnm4video",
-    .long_name      = NULL_IF_CONFIG_SMALL("HNM 4 video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_HNM4_VIDEO,
+const FFCodec ff_hnm4_video_decoder = {
+    .p.name         = "hnm4video",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("HNM 4 video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_HNM4_VIDEO,
     .priv_data_size = sizeof(Hnm4VideoContext),
     .init           = hnm_decode_init,
     .close          = hnm_decode_end,
-    .decode         = hnm_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(hnm_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

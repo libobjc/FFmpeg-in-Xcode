@@ -76,6 +76,7 @@ try to unroll inner for(x=0 ... loop to avoid these damn if(x ... checks
 #include "config.h"
 #include "libavutil/avutil.h"
 #include "libavutil/avassert.h"
+#include "libavutil/cpu.h"
 #include "libavutil/intreadwrite.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -90,26 +91,6 @@ try to unroll inner for(x=0 ... loop to avoid these damn if(x ... checks
 #include "postprocess_internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/ppc/util_altivec.h"
-
-#include "libavutil/ffversion.h"
-const char postproc_ffversion[] = "FFmpeg version " FFMPEG_VERSION;
-
-unsigned postproc_version(void)
-{
-    av_assert0(LIBPOSTPROC_VERSION_MICRO >= 100);
-    return LIBPOSTPROC_VERSION_INT;
-}
-
-const char *postproc_configuration(void)
-{
-    return FFMPEG_CONFIGURATION;
-}
-
-const char *postproc_license(void)
-{
-#define LICENSE_PREFIX "libpostproc license: "
-    return LICENSE_PREFIX FFMPEG_LICENSE + sizeof(LICENSE_PREFIX) - 1;
-}
 
 #define GET_MODE_BUFFER_SIZE 500
 #define OPTIONS_ARRAY_SIZE 10
@@ -407,7 +388,7 @@ static av_always_inline void do_a_deblock_C(uint8_t *src, int step,
     const int QP= c->QP;
     const int dcOffset= ((c->nonBQP*c->ppMode.baseDcDiff)>>8) + 1;
     const int dcThreshold= dcOffset*2 + 1;
-//START_TIMER
+
     src+= step*4; // src points to begin of the 8x8 Block
     for(y=0; y<8; y++){
         int numEq= 0;
@@ -511,11 +492,6 @@ static av_always_inline void do_a_deblock_C(uint8_t *src, int step,
 
         src += stride;
     }
-/*if(step==16){
-    STOP_TIMER("step16")
-}else{
-    STOP_TIMER("stepX")
-}*/
 }
 
 //Note: we have C, MMX, MMX2, 3DNOW version there is no 3DNOW+MMX2 one

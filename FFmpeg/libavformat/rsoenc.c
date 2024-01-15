@@ -22,6 +22,7 @@
 
 #include "avformat.h"
 #include "internal.h"
+#include "rawenc.h"
 #include "riff.h"
 #include "rso.h"
 
@@ -33,7 +34,7 @@ static int rso_write_header(AVFormatContext *s)
     if (!par->codec_tag)
         return AVERROR_INVALIDDATA;
 
-    if (par->channels != 1) {
+    if (par->ch_layout.nb_channels != 1) {
         av_log(s, AV_LOG_ERROR, "RSO only supports mono\n");
         return AVERROR_INVALIDDATA;
     }
@@ -60,14 +61,6 @@ static int rso_write_header(AVFormatContext *s)
     avio_wb16(pb, par->sample_rate);
     avio_wb16(pb, 0x0000);           /* play mode ? (0x0000 = don't loop) */
 
-    avio_flush(pb);
-
-    return 0;
-}
-
-static int rso_write_packet(AVFormatContext *s, AVPacket *pkt)
-{
-    avio_write(s->pb, pkt->data, pkt->size);
     return 0;
 }
 
@@ -98,15 +91,15 @@ static int rso_write_trailer(AVFormatContext *s)
     return 0;
 }
 
-AVOutputFormat ff_rso_muxer = {
+const AVOutputFormat ff_rso_muxer = {
     .name           =   "rso",
     .long_name      =   NULL_IF_CONFIG_SMALL("Lego Mindstorms RSO"),
     .extensions     =   "rso",
     .audio_codec    =   AV_CODEC_ID_PCM_U8,
     .video_codec    =   AV_CODEC_ID_NONE,
     .write_header   =   rso_write_header,
-    .write_packet   =   rso_write_packet,
+    .write_packet   =   ff_raw_write_packet,
     .write_trailer  =   rso_write_trailer,
-    .codec_tag      =   (const AVCodecTag* const []){ff_codec_rso_tags, 0},
+    .codec_tag      =   ff_rso_codec_tags_list,
     .flags          =   AVFMT_NOTIMESTAMPS,
 };

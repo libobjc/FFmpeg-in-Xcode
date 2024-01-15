@@ -54,12 +54,6 @@ typedef struct ID3v2EncContext {
     int          len;       ///< size of the tag written so far
 } ID3v2EncContext;
 
-typedef struct ID3v2ExtraMeta {
-    const char *tag;
-    void *data;
-    struct ID3v2ExtraMeta *next;
-} ID3v2ExtraMeta;
-
 typedef struct ID3v2ExtraMetaGEOB {
     uint32_t datasize;
     uint8_t *mime_type;
@@ -87,6 +81,17 @@ typedef struct ID3v2ExtraMetaCHAP {
     AVDictionary *meta;
 } ID3v2ExtraMetaCHAP;
 
+typedef struct ID3v2ExtraMeta {
+    const char *tag;
+    struct ID3v2ExtraMeta *next;
+    union {
+        ID3v2ExtraMetaAPIC apic;
+        ID3v2ExtraMetaCHAP chap;
+        ID3v2ExtraMetaGEOB geob;
+        ID3v2ExtraMetaPRIV priv;
+    } data;
+} ID3v2ExtraMeta;
+
 /**
  * Detect ID3v2 Header.
  * @param buf   must be ID3v2_HEADER_SIZE byte long
@@ -106,7 +111,7 @@ int ff_id3v2_tag_len(const uint8_t *buf);
  * Read an ID3v2 tag into specified dictionary and retrieve supported extra metadata.
  *
  * @param metadata Parsed metadata is stored here
- * @param extra_meta If not NULL, extra metadata is parsed into a list of
+ * @param[out] extra_meta If not NULL, extra metadata is parsed into a list of
  * ID3v2ExtraMeta structs and *extra_meta points to the head of the list
  */
 void ff_id3v2_read_dict(AVIOContext *pb, AVDictionary **metadata, const char *magic, ID3v2ExtraMeta **extra_meta);
@@ -116,7 +121,7 @@ void ff_id3v2_read_dict(AVIOContext *pb, AVDictionary **metadata, const char *ma
  *
  * Data is read from and stored to AVFormatContext.
  *
- * @param extra_meta If not NULL, extra metadata is parsed into a list of
+ * @param[out] extra_meta If not NULL, extra metadata is parsed into a list of
  * ID3v2ExtraMeta structs and *extra_meta points to the head of the list
  * @param[opt] max_search_search restrict ID3 magic number search (bytes from start)
  */
@@ -162,25 +167,25 @@ void ff_id3v2_free_extra_meta(ID3v2ExtraMeta **extra_meta);
  * Create a stream for each APIC (attached picture) extracted from the
  * ID3v2 header.
  */
-int ff_id3v2_parse_apic(AVFormatContext *s, ID3v2ExtraMeta **extra_meta);
+int ff_id3v2_parse_apic(AVFormatContext *s, ID3v2ExtraMeta *extra_meta);
 
 /**
  * Create chapters for all CHAP tags found in the ID3v2 header.
  */
-int ff_id3v2_parse_chapters(AVFormatContext *s, ID3v2ExtraMeta **extra_meta);
+int ff_id3v2_parse_chapters(AVFormatContext *s, ID3v2ExtraMeta *extra_meta);
 
 /**
  * Parse PRIV tags into a dictionary. The PRIV owner is the metadata key. The
  * PRIV data is the value, with non-printable characters escaped.
  */
-int ff_id3v2_parse_priv_dict(AVDictionary **d, ID3v2ExtraMeta **extra_meta);
+int ff_id3v2_parse_priv_dict(AVDictionary **d, ID3v2ExtraMeta *extra_meta);
 
 /**
  * Add metadata for all PRIV tags in the ID3v2 header. The PRIV owner is the
  * metadata key. The PRIV data is the value, with non-printable characters
  * escaped.
  */
-int ff_id3v2_parse_priv(AVFormatContext *s, ID3v2ExtraMeta **extra_meta);
+int ff_id3v2_parse_priv(AVFormatContext *s, ID3v2ExtraMeta *extra_meta);
 
 extern const AVMetadataConv ff_id3v2_34_metadata_conv[];
 extern const AVMetadataConv ff_id3v2_4_metadata_conv[];

@@ -30,7 +30,6 @@
 #include <xvid.h>
 
 #include "libavutil/avassert.h"
-#include "libavutil/cpu.h"
 #include "libavutil/file.h"
 #include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
@@ -39,9 +38,10 @@
 #include "libavutil/opt.h"
 
 #include "avcodec.h"
-#include "internal.h"
-#include "libxvid.h"
+#include "codec_internal.h"
+#include "encode.h"
 #include "mpegutils.h"
+#include "packet_internal.h"
 
 #if HAVE_UNISTD_H
 #include <unistd.h>
@@ -617,13 +617,6 @@ static av_cold int xvid_encode_init(AVCodecContext *avctx)
     x->intra_matrix =
     x->inter_matrix = NULL;
 
-#if FF_API_PRIVATE_OPT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->mpeg_quant)
-        x->mpeg_quant = avctx->mpeg_quant;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     if (x->mpeg_quant)
         x->vol_flags |= XVID_VOL_MPEGQUANT;
     if ((avctx->intra_matrix || avctx->inter_matrix)) {
@@ -664,7 +657,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if (xvid_flags & AV_CODEC_FLAG_GLOBAL_HEADER) {
         /* In this case, we are claiming to be MPEG-4 */
         x->quicktime_format = 1;
-        avctx->codec_id     = AV_CODEC_ID_MPEG4;
     } else {
         /* We are claiming to be Xvid */
         x->quicktime_format = 0;
@@ -684,17 +676,22 @@ FF_ENABLE_DEPRECATION_WARNINGS
     /* Encode a dummy frame to get the extradata immediately */
     if (x->quicktime_format) {
         AVFrame *picture;
-        AVPacket packet = {0};
-        int size, got_packet, ret;
+        AVPacket *packet;
+        int size, got_packet;
 
-        av_init_packet(&packet);
+        packet = av_packet_alloc();
+        if (!packet)
+            return AVERROR(ENOMEM);
 
         picture = av_frame_alloc();
-        if (!picture)
+        if (!picture) {
+            av_packet_free(&packet);
             return AVERROR(ENOMEM);
+        }
 
         xerr = xvid_encore(NULL, XVID_ENC_CREATE, &xvid_enc_create, NULL);
         if( xerr ) {
+            av_packet_free(&packet);
             av_frame_free(&picture);
             av_log(avctx, AV_LOG_ERROR, "Xvid: Could not create encoder reference\n");
             return AVERROR_EXTERNAL;
@@ -703,6 +700,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         size = ((avctx->width + 1) & ~1) * ((avctx->height + 1) & ~1);
         picture->data[0] = av_malloc(size + size / 2);
         if (!picture->data[0]) {
+            av_packet_free(&packet);
             av_frame_free(&picture);
             return AVERROR(ENOMEM);
         }
@@ -710,9 +708,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
         picture->data[2] = picture->data[1] + size / 4;
         memset(picture->data[0], 0, size);
         memset(picture->data[1], 128, size / 2);
-        ret = xvid_encode_frame(avctx, &packet, picture, &got_packet);
-        if (!ret && got_packet)
-            av_packet_unref(&packet);
+        xvid_encode_frame(avctx, packet, picture, &got_packet);
+        av_packet_free(&packet);
         av_free(picture->data[0]);
         av_frame_free(&picture);
         xvid_encore(x->encoder_handle, XVID_ENC_DESTROY, NULL, NULL);
@@ -733,7 +730,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 static int xvid_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                              const AVFrame *picture, int *got_packet)
 {
-    int xerr, i, ret, user_packet = !!pkt->data;
+    int xerr, i, ret;
     struct xvid_context *x = avctx->priv_data;
     int mb_width  = (avctx->width  + 15) / 16;
     int mb_height = (avctx->height + 15) / 16;
@@ -742,7 +739,7 @@ static int xvid_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     xvid_enc_frame_t xvid_enc_frame = { 0 };
     xvid_enc_stats_t xvid_enc_stats = { 0 };
 
-    if ((ret = ff_alloc_packet2(avctx, pkt, mb_width*(int64_t)mb_height*MAX_MB_BYTES + AV_INPUT_BUFFER_MIN_SIZE, 0)) < 0)
+    if ((ret = ff_alloc_packet(avctx, pkt, mb_width*(int64_t)mb_height*MAX_MB_BYTES + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
         return ret;
 
     /* Start setting up the frame */
@@ -830,39 +827,19 @@ static int xvid_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         else
             pict_type = AV_PICTURE_TYPE_I;
 
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-        avctx->coded_frame->pict_type = pict_type;
-        avctx->coded_frame->quality = xvid_enc_stats.quant * FF_QP2LAMBDA;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
         ff_side_data_set_encoder_stats(pkt, xvid_enc_stats.quant * FF_QP2LAMBDA, NULL, 0, pict_type);
 
         if (xvid_enc_frame.out_flags & XVID_KEYFRAME) {
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-            avctx->coded_frame->key_frame = 1;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
             pkt->flags  |= AV_PKT_FLAG_KEY;
             if (x->quicktime_format)
                 return xvid_strip_vol_header(avctx, pkt,
                                              xvid_enc_stats.hlength, xerr);
-        } else {
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-            avctx->coded_frame->key_frame = 0;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
         }
 
         pkt->size = xerr;
 
         return 0;
     } else {
-        if (!user_packet)
-            av_packet_unref(pkt);
         if (!xerr)
             return 0;
         av_log(avctx, AV_LOG_ERROR,
@@ -880,7 +857,6 @@ static av_cold int xvid_encode_close(AVCodecContext *avctx)
         x->encoder_handle = NULL;
     }
 
-    av_freep(&avctx->extradata);
     if (x->twopassbuffer) {
         av_freep(&x->twopassbuffer);
         av_freep(&x->old_twopassbuffer);
@@ -921,18 +897,18 @@ static const AVClass xvid_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_libxvid_encoder = {
-    .name           = "libxvid",
-    .long_name      = NULL_IF_CONFIG_SMALL("libxvidcore MPEG-4 part 2"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_MPEG4,
+const FFCodec ff_libxvid_encoder = {
+    .p.name         = "libxvid",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("libxvidcore MPEG-4 part 2"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MPEG4,
     .priv_data_size = sizeof(struct xvid_context),
     .init           = xvid_encode_init,
-    .encode2        = xvid_encode_frame,
+    FF_CODEC_ENCODE_CB(xvid_encode_frame),
     .close          = xvid_encode_close,
-    .pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },
-    .priv_class     = &xvid_class,
+    .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },
+    .p.priv_class   = &xvid_class,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,
-    .wrapper_name   = "libxvid",
+    .p.wrapper_name = "libxvid",
 };

@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/mem.h"
+#include "libavutil/mem_internal.h"
 
 #include "dcadsp.h"
 #include "dcamath.h"
@@ -328,7 +328,7 @@ static void dmix_add_c(int32_t *dst, const int32_t *src, int coeff, ptrdiff_t le
     int i;
 
     for (i = 0; i < len; i++)
-        dst[i] += mul15(src[i], coeff);
+        dst[i] += (unsigned)mul15(src[i], coeff);
 }
 
 static void dmix_scale_c(int32_t *dst, int scale, ptrdiff_t len)
@@ -485,6 +485,7 @@ av_cold void ff_dcadsp_init(DCADSPContext *s)
     s->lbr_bank = lbr_bank_c;
     s->lfe_iir = lfe_iir_c;
 
-    if (ARCH_X86)
-        ff_dcadsp_init_x86(s);
+#if ARCH_X86
+    ff_dcadsp_init_x86(s);
+#endif
 }

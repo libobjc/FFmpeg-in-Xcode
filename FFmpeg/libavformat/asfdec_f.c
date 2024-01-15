@@ -33,7 +33,7 @@
 #include "avformat.h"
 #include "avio_internal.h"
 #include "avlanguage.h"
-#include "id3v2.h"
+#include "demux.h"
 #include "internal.h"
 #include "riff.h"
 #include "asf.h"
@@ -104,7 +104,7 @@ typedef struct ASFContext {
     int ts_is_pts;
     int packet_multi_size;
     int packet_time_delta;
-    int packet_time_start;
+    int64_t packet_time_start;
     int64_t packet_pos;
 
     int stream_index;
@@ -143,8 +143,14 @@ static const ff_asf_guid stream_bitrate_guid = { /* (http://get.to/sdp) */
     0xce, 0x75, 0xf8, 0x7b, 0x8d, 0x46, 0xd1, 0x11, 0x8d, 0x82, 0x00, 0x60, 0x97, 0xc9, 0xa2, 0xb2
 };
 
+static const ff_asf_guid asf_audio_conceal_none = {
+    // 0x40, 0xa4, 0xf1, 0x49, 0x4ece, 0x11d0, 0xa3, 0xac, 0x00, 0xa0, 0xc9, 0x03, 0x48, 0xf6
+    // New value lifted from avifile
+    0x00, 0x57, 0xfb, 0x20, 0x55, 0x5B, 0xCF, 0x11, 0xa8, 0xfd, 0x00, 0x80, 0x5f, 0x5c, 0x44, 0x2b
+};
+
 #define PRINT_IF_GUID(g, cmp) \
-    if (!ff_guidcmp(g, &cmp)) \
+    if (!ff_guidcmp(g, &(cmp))) \
         av_log(NULL, AV_LOG_TRACE, "(GUID: %s) ", # cmp)
 
 static void print_guid(ff_asf_guid *g)
@@ -154,7 +160,7 @@ static void print_guid(ff_asf_guid *g)
     else PRINT_IF_GUID(g, ff_asf_file_header);
     else PRINT_IF_GUID(g, ff_asf_stream_header);
     else PRINT_IF_GUID(g, ff_asf_audio_stream);
-    else PRINT_IF_GUID(g, ff_asf_audio_conceal_none);
+    else PRINT_IF_GUID(g, asf_audio_conceal_none);
     else PRINT_IF_GUID(g, ff_asf_video_stream);
     else PRINT_IF_GUID(g, ff_asf_video_conceal_none);
     else PRINT_IF_GUID(g, ff_asf_command_stream);
@@ -200,118 +206,17 @@ static int asf_probe(const AVProbeData *pd)
 static int get_value(AVIOContext *pb, int type, int type2_size)
 {
     switch (type) {
-    case 2:
+    case ASF_BOOL:
         return (type2_size == 32) ? avio_rl32(pb) : avio_rl16(pb);
-    case 3:
+    case ASF_DWORD:
         return avio_rl32(pb);
-    case 4:
+    case ASF_QWORD:
         return avio_rl64(pb);
-    case 5:
+    case ASF_WORD:
         return avio_rl16(pb);
     default:
         return INT_MIN;
     }
-}
-
-/* MSDN claims that this should be "compatible with the ID3 frame, APIC",
- * but in reality this is only loosely similar */
-static int asf_read_picture(AVFormatContext *s, int len)
-{
-    AVPacket pkt          = { 0 };
-    const CodecMime *mime = ff_id3v2_mime_tags;
-    enum  AVCodecID id    = AV_CODEC_ID_NONE;
-    char mimetype[64];
-    uint8_t  *desc = NULL;
-    AVStream   *st = NULL;
-    int ret, type, picsize, desc_len;
-
-    /* type + picsize + mime + desc */
-    if (len < 1 + 4 + 2 + 2) {
-        av_log(s, AV_LOG_ERROR, "Invalid attached picture size: %d.\n", len);
-        return AVERROR_INVALIDDATA;
-    }
-
-    /* picture type */
-    type = avio_r8(s->pb);
-    len--;
-    if (type >= FF_ARRAY_ELEMS(ff_id3v2_picture_types) || type < 0) {
-        av_log(s, AV_LOG_WARNING, "Unknown attached picture type: %d.\n", type);
-        type = 0;
-    }
-
-    /* picture data size */
-    picsize = avio_rl32(s->pb);
-    len    -= 4;
-
-    /* picture MIME type */
-    len -= avio_get_str16le(s->pb, len, mimetype, sizeof(mimetype));
-    while (mime->id != AV_CODEC_ID_NONE) {
-        if (!strncmp(mime->str, mimetype, sizeof(mimetype))) {
-            id = mime->id;
-            break;
-        }
-        mime++;
-    }
-    if (id == AV_CODEC_ID_NONE) {
-        av_log(s, AV_LOG_ERROR, "Unknown attached picture mimetype: %s.\n",
-               mimetype);
-        return 0;
-    }
-
-    if (picsize >= len) {
-        av_log(s, AV_LOG_ERROR, "Invalid attached picture data size: %d >= %d.\n",
-               picsize, len);
-        return AVERROR_INVALIDDATA;
-    }
-
-    /* picture description */
-    desc_len = (len - picsize) * 2 + 1;
-    desc     = av_malloc(desc_len);
-    if (!desc)
-        return AVERROR(ENOMEM);
-    len -= avio_get_str16le(s->pb, len - picsize, desc, desc_len);
-
-    ret = av_get_packet(s->pb, &pkt, picsize);
-    if (ret < 0)
-        goto fail;
-
-    st  = avformat_new_stream(s, NULL);
-    if (!st) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
-    st->disposition              |= AV_DISPOSITION_ATTACHED_PIC;
-    st->codecpar->codec_type      = AVMEDIA_TYPE_VIDEO;
-    st->codecpar->codec_id        = id;
-    st->attached_pic              = pkt;
-    st->attached_pic.stream_index = st->index;
-    st->attached_pic.flags       |= AV_PKT_FLAG_KEY;
-
-    if (*desc)
-        av_dict_set(&st->metadata, "title", desc, AV_DICT_DONT_STRDUP_VAL);
-    else
-        av_freep(&desc);
-
-    av_dict_set(&st->metadata, "comment", ff_id3v2_picture_types[type], 0);
-
-    return 0;
-
-fail:
-    av_freep(&desc);
-    av_packet_unref(&pkt);
-    return ret;
-}
-
-static void get_id3_tag(AVFormatContext *s, int len)
-{
-    ID3v2ExtraMeta *id3v2_extra_meta = NULL;
-
-    ff_id3v2_read(s, ID3v2_DEFAULT_MAGIC, &id3v2_extra_meta, len);
-    if (id3v2_extra_meta) {
-        ff_id3v2_parse_apic(s, &id3v2_extra_meta);
-        ff_id3v2_parse_chapters(s, &id3v2_extra_meta);
-    }
-    ff_id3v2_free_extra_meta(&id3v2_extra_meta);
 }
 
 static void get_tag(AVFormatContext *s, const char *key, int type, int len, int type2_size)
@@ -321,8 +226,7 @@ static void get_tag(AVFormatContext *s, const char *key, int type, int len, int 
     int64_t off = avio_tell(s->pb);
 #define LEN 22
 
-    if ((unsigned)len >= (UINT_MAX - LEN) / 2)
-        return;
+    av_assert0((unsigned)len < (INT_MAX - LEN) / 2);
 
     if (!asf->export_xmp && !strncmp(key, "xmp", 3))
         goto finish;
@@ -340,13 +244,8 @@ static void get_tag(AVFormatContext *s, const char *key, int type, int len, int 
         value[len]=0;
         break;
     case ASF_BYTE_ARRAY:
-        if (!strcmp(key, "WM/Picture")) { // handle cover art
-            asf_read_picture(s, len);
-        } else if (!strcmp(key, "ID3")) { // handle ID3 tag
-            get_id3_tag(s, len);
-        } else {
+        if (ff_asf_handle_byte_array(s, key, len) > 0)
             av_log(s, AV_LOG_VERBOSE, "Unsupported byte array in tag %s.\n", key);
-        }
         goto finish;
     case ASF_BOOL:
     case ASF_DWORD:
@@ -372,7 +271,7 @@ finish:
     avio_seek(s->pb, off + len, SEEK_SET);
 }
 
-static int asf_read_file_properties(AVFormatContext *s, int64_t size)
+static int asf_read_file_properties(AVFormatContext *s)
 {
     ASFContext *asf = s->priv_data;
     AVIOContext *pb = s->pb;
@@ -401,6 +300,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
     ASFContext *asf = s->priv_data;
     AVIOContext *pb = s->pb;
     AVStream *st;
+    FFStream *sti;
     ASFStream *asf_st;
     ff_asf_guid g;
     enum AVMediaType type;
@@ -419,13 +319,14 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
     st = avformat_new_stream(s, NULL);
     if (!st)
         return AVERROR(ENOMEM);
+    sti = ffstream(st);
     avpriv_set_pts_info(st, 32, 1, 1000); /* 32 bit pts in ms */
     start_time     = asf->hdr.preroll;
 
     if (!(asf->hdr.flags & 0x01)) { // if we aren't streaming...
         int64_t fsize = avio_size(pb);
         if (fsize <= 0 || (int64_t)asf->hdr.file_size <= 0 ||
-            20*FFABS(fsize - (int64_t)asf->hdr.file_size) < FFMIN(fsize, asf->hdr.file_size))
+            FFABS(fsize - (int64_t)asf->hdr.file_size) < FFMIN(fsize, asf->hdr.file_size)/20)
             st->duration = asf->hdr.play_time /
                        (10000000 / 1000) - start_time;
     }
@@ -480,13 +381,13 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
         if (is_dvr_ms_audio) {
             // codec_id and codec_tag are unreliable in dvr_ms
             // files. Set them later by probing stream.
-            st->request_probe    = 1;
+            sti->request_probe = 1;
             st->codecpar->codec_tag = 0;
         }
         if (st->codecpar->codec_id == AV_CODEC_ID_AAC)
-            st->need_parsing = AVSTREAM_PARSE_NONE;
+            sti->need_parsing = AVSTREAM_PARSE_NONE;
         else
-            st->need_parsing = AVSTREAM_PARSE_FULL;
+            sti->need_parsing = AVSTREAM_PARSE_FULL;
         /* We have to init the frame size at some point .... */
         pos2 = avio_tell(pb);
         if (size >= (pos2 + 8 - pos1 + 24)) {
@@ -517,6 +418,8 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
         tag1                             = avio_rl32(pb);
         avio_skip(pb, 20);
         if (sizeX > 40) {
+            if (size < sizeX - 40 || sizeX - 40 > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+                return AVERROR_INVALIDDATA;
             st->codecpar->extradata_size = ffio_limit(pb, sizeX - 40);
             st->codecpar->extradata      = av_mallocz(st->codecpar->extradata_size +
                                                    AV_INPUT_BUFFER_PADDING_SIZE);
@@ -543,7 +446,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
         st->codecpar->codec_tag = tag1;
         st->codecpar->codec_id  = ff_codec_get_id(ff_codec_bmp_tags, tag1);
         if (tag1 == MKTAG('D', 'V', 'R', ' ')) {
-            st->need_parsing = AVSTREAM_PARSE_FULL;
+            sti->need_parsing = AVSTREAM_PARSE_FULL;
             /* issue658 contains wrong w/h and MS even puts a fake seq header
              * with wrong w/h in extradata while a correct one is in the stream.
              * maximum lameness */
@@ -553,9 +456,9 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
             st->codecpar->extradata_size = 0;
         }
         if (st->codecpar->codec_id == AV_CODEC_ID_H264)
-            st->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
+            sti->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
         if (st->codecpar->codec_id == AV_CODEC_ID_MPEG4)
-            st->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
+            sti->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
     }
     pos2 = avio_tell(pb);
     avio_skip(pb, size - (pos2 - pos1 + 24));
@@ -563,7 +466,7 @@ static int asf_read_stream_properties(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_ext_stream_properties(AVFormatContext *s, int64_t size)
+static int asf_read_ext_stream_properties(AVFormatContext *s)
 {
     ASFContext *asf = s->priv_data;
     AVIOContext *pb = s->pb;
@@ -608,6 +511,8 @@ static int asf_read_ext_stream_properties(AVFormatContext *s, int64_t size)
         ff_get_guid(pb, &g);
         size = avio_rl16(pb);
         ext_len = avio_rl32(pb);
+        if (ext_len < 0)
+            return AVERROR_INVALIDDATA;
         avio_skip(pb, ext_len);
         if (stream_num < 128 && i < FF_ARRAY_ELEMS(asf->streams[stream_num].payload)) {
             ASFPayload *p = &asf->streams[stream_num].payload[i];
@@ -621,7 +526,7 @@ static int asf_read_ext_stream_properties(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_content_desc(AVFormatContext *s, int64_t size)
+static int asf_read_content_desc(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     int len1, len2, len3, len4, len5;
@@ -640,7 +545,7 @@ static int asf_read_content_desc(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_ext_content_desc(AVFormatContext *s, int64_t size)
+static int asf_read_ext_content_desc(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -674,7 +579,7 @@ static int asf_read_ext_content_desc(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_language_list(AVFormatContext *s, int64_t size)
+static int asf_read_language_list(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -694,7 +599,7 @@ static int asf_read_language_list(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_metadata(AVFormatContext *s, int64_t size)
+static int asf_read_metadata(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -711,6 +616,9 @@ static int asf_read_metadata(AVFormatContext *s, int64_t size)
         name_len_utf16 = avio_rl16(pb);
         value_type = avio_rl16(pb); /* value_type */
         value_len  = avio_rl32(pb);
+
+        if (value_len < 0 || value_len > UINT16_MAX)
+            return AVERROR_INVALIDDATA;
 
         name_len_utf8 = 2*name_len_utf16 + 1;
         name          = av_malloc(name_len_utf8);
@@ -739,7 +647,7 @@ static int asf_read_metadata(AVFormatContext *s, int64_t size)
     return 0;
 }
 
-static int asf_read_marker(AVFormatContext *s, int64_t size)
+static int asf_read_marker(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     ASFContext *asf = s->priv_data;
@@ -762,11 +670,13 @@ static int asf_read_marker(AVFormatContext *s, int64_t size)
 
         avio_rl64(pb);             // offset, 8 bytes
         pres_time = avio_rl64(pb); // presentation time
-        pres_time -= asf->hdr.preroll * 10000;
+        pres_time = av_sat_sub64(pres_time, asf->hdr.preroll * 10000);
         avio_rl16(pb);             // entry length
         avio_rl32(pb);             // send time
         avio_rl32(pb);             // flags
         name_len = avio_rl32(pb);  // name length
+        if ((unsigned)name_len > INT_MAX / 2)
+            return AVERROR_INVALIDDATA;
         if ((ret = avio_get_str16le(pb, name_len * 2, name,
                                     sizeof(name))) < name_len)
             avio_skip(pb, name_len - ret);
@@ -816,21 +726,21 @@ static int asf_read_header(AVFormatContext *s)
         if (gsize < 24)
             return AVERROR_INVALIDDATA;
         if (!ff_guidcmp(&g, &ff_asf_file_header)) {
-            ret = asf_read_file_properties(s, gsize);
+            ret = asf_read_file_properties(s);
         } else if (!ff_guidcmp(&g, &ff_asf_stream_header)) {
             ret = asf_read_stream_properties(s, gsize);
         } else if (!ff_guidcmp(&g, &ff_asf_comment_header)) {
-            asf_read_content_desc(s, gsize);
+            asf_read_content_desc(s);
         } else if (!ff_guidcmp(&g, &ff_asf_language_guid)) {
-            asf_read_language_list(s, gsize);
+            asf_read_language_list(s);
         } else if (!ff_guidcmp(&g, &ff_asf_extended_content_header)) {
-            asf_read_ext_content_desc(s, gsize);
+            asf_read_ext_content_desc(s);
         } else if (!ff_guidcmp(&g, &ff_asf_metadata_header)) {
-            asf_read_metadata(s, gsize);
+            asf_read_metadata(s);
         } else if (!ff_guidcmp(&g, &ff_asf_metadata_library_header)) {
-            asf_read_metadata(s, gsize);
+            asf_read_metadata(s);
         } else if (!ff_guidcmp(&g, &ff_asf_ext_stream_header)) {
-            asf_read_ext_stream_properties(s, gsize);
+            asf_read_ext_stream_properties(s);
 
             // there could be an optional stream properties object to follow
             // if so the next iteration will pick it up
@@ -840,28 +750,37 @@ static int asf_read_header(AVFormatContext *s)
             avio_skip(pb, 6);
             continue;
         } else if (!ff_guidcmp(&g, &ff_asf_marker_header)) {
-            asf_read_marker(s, gsize);
+            asf_read_marker(s);
         } else if (avio_feof(pb)) {
             return AVERROR_EOF;
         } else {
             if (!s->keylen) {
                 if (!ff_guidcmp(&g, &ff_asf_content_encryption)) {
+                    AVPacket *const pkt = ffformatcontext(s)->parse_pkt;
                     unsigned int len;
-                    AVPacket pkt;
                     av_log(s, AV_LOG_WARNING,
                            "DRM protected stream detected, decoding will likely fail!\n");
                     len= avio_rl32(pb);
                     av_log(s, AV_LOG_DEBUG, "Secret data:\n");
 
-                    if ((ret = av_get_packet(pb, &pkt, len)) < 0)
+                    if ((ret = av_get_packet(pb, pkt, len)) < 0)
                         return ret;
-                    av_hex_dump_log(s, AV_LOG_DEBUG, pkt.data, pkt.size);
-                    av_packet_unref(&pkt);
+                    av_hex_dump_log(s, AV_LOG_DEBUG, pkt->data, pkt->size);
+                    av_packet_unref(pkt);
+
                     len= avio_rl32(pb);
+                    if (len > UINT16_MAX)
+                        return AVERROR_INVALIDDATA;
                     get_tag(s, "ASF_Protection_Type", -1, len, 32);
+
                     len= avio_rl32(pb);
+                    if (len > UINT16_MAX)
+                        return AVERROR_INVALIDDATA;
                     get_tag(s, "ASF_Key_ID", -1, len, 32);
+
                     len= avio_rl32(pb);
+                    if (len > UINT16_MAX)
+                        return AVERROR_INVALIDDATA;
                     get_tag(s, "ASF_License_URL", -1, len, 32);
                 } else if (!ff_guidcmp(&g, &ff_asf_ext_content_encryption)) {
                     av_log(s, AV_LOG_WARNING,
@@ -968,7 +887,7 @@ static int asf_get_packet(AVFormatContext *s, AVIOContext *pb)
         if (asf->no_resync_search)
             off = 3;
 //         else if (s->packet_size > 0 && !asf->uses_std_ecc)
-//             off = (avio_tell(pb) - s->internal->data_offset) % s->packet_size + 3;
+//             off = (avio_tell(pb) - ffformatcontext(s)->data_offset) % s->packet_size + 3;
 
         c = d = e = -1;
         while (off-- > 0) {
@@ -1298,10 +1217,12 @@ static int asf_parse_packet(AVFormatContext *s, AVIOContext *pb, AVPacket *pkt)
             if ((ret = av_new_packet(&asf_st->pkt, asf_st->packet_obj_size)) < 0)
                 return ret;
             asf_st->seq              = asf->packet_seq;
-            if (asf->ts_is_pts) {
-                asf_st->pkt.pts          = asf->packet_frag_timestamp - asf->hdr.preroll;
-            } else
-                asf_st->pkt.dts          = asf->packet_frag_timestamp - asf->hdr.preroll;
+            if (asf->packet_frag_timestamp != AV_NOPTS_VALUE) {
+                if (asf->ts_is_pts) {
+                    asf_st->pkt.pts          = asf->packet_frag_timestamp - asf->hdr.preroll;
+                } else
+                    asf_st->pkt.dts          = asf->packet_frag_timestamp - asf->hdr.preroll;
+            }
             asf_st->pkt.stream_index = asf->stream_index;
             asf_st->pkt.pos          = asf_st->packet_pos = asf->packet_pos;
             asf_st->pkt_clean        = 0;
@@ -1513,6 +1434,7 @@ static int asf_read_close(AVFormatContext *s)
 static int64_t asf_read_pts(AVFormatContext *s, int stream_index,
                             int64_t *ppos, int64_t pos_limit)
 {
+    FFFormatContext *const si = ffformatcontext(s);
     ASFContext *asf     = s->priv_data;
     AVPacket pkt1, *pkt = &pkt1;
     ASFStream *asf_st;
@@ -1525,9 +1447,9 @@ static int64_t asf_read_pts(AVFormatContext *s, int stream_index,
         start_pos[i] = pos;
 
     if (s->packet_size > 0)
-        pos = (pos + s->packet_size - 1 - s->internal->data_offset) /
+        pos = (pos + s->packet_size - 1 - si->data_offset) /
               s->packet_size * s->packet_size +
-              s->internal->data_offset;
+              si->data_offset;
     *ppos = pos;
     if (avio_seek(s->pb, pos, SEEK_SET) < 0)
         return AV_NOPTS_VALUE;
@@ -1609,7 +1531,7 @@ static int asf_build_simple_index(AVFormatContext *s, int stream_index)
         for (i = 0; i < ict; i++) {
             int pktnum        = avio_rl32(s->pb);
             int pktct         = avio_rl16(s->pb);
-            int64_t pos       = s->internal->data_offset + s->packet_size * (int64_t)pktnum;
+            int64_t pos       = ffformatcontext(s)->data_offset + s->packet_size * (int64_t)pktnum;
             int64_t index_pts = FFMAX(av_rescale(itime, i, 10000) - asf->hdr.preroll, 0);
 
             if (avio_feof(s->pb)) {
@@ -1640,6 +1562,7 @@ static int asf_read_seek(AVFormatContext *s, int stream_index,
 {
     ASFContext *asf = s->priv_data;
     AVStream *st    = s->streams[stream_index];
+    FFStream *const sti = ffstream(st);
     int ret = 0;
 
     if (s->packet_size <= 0)
@@ -1657,7 +1580,7 @@ static int asf_read_seek(AVFormatContext *s, int stream_index,
     /* explicitly handle the case of seeking to 0 */
     if (!pts) {
         asf_reset_header(s);
-        avio_seek(s->pb, s->internal->data_offset, SEEK_SET);
+        avio_seek(s->pb, ffformatcontext(s)->data_offset, SEEK_SET);
         return 0;
     }
 
@@ -1667,11 +1590,11 @@ static int asf_read_seek(AVFormatContext *s, int stream_index,
             asf->index_read = -1;
     }
 
-    if (asf->index_read > 0 && st->index_entries) {
+    if (asf->index_read > 0 && sti->index_entries) {
         int index = av_index_search_timestamp(st, pts, flags);
         if (index >= 0) {
             /* find the position */
-            uint64_t pos = st->index_entries[index].pos;
+            uint64_t pos = sti->index_entries[index].pos;
 
             /* do the seek */
             av_log(s, AV_LOG_DEBUG, "SEEKTO: %"PRId64"\n", pos);
@@ -1690,7 +1613,7 @@ static int asf_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-AVInputFormat ff_asf_demuxer = {
+const AVInputFormat ff_asf_demuxer = {
     .name           = "asf",
     .long_name      = NULL_IF_CONFIG_SMALL("ASF (Advanced / Active Streaming Format)"),
     .priv_data_size = sizeof(ASFContext),

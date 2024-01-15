@@ -26,6 +26,7 @@
 #include "libavutil/bprint.h"
 #include "ass_split.h"
 #include "ass.h"
+#include "codec_internal.h"
 
 #define WEBVTT_STACK_SIZE 64
 typedef struct {
@@ -168,29 +169,15 @@ static int webvtt_encode_frame(AVCodecContext *avctx,
 
         if (sub->rects[i]->type != SUBTITLE_ASS) {
             av_log(avctx, AV_LOG_ERROR, "Only SUBTITLE_ASS type supported.\n");
-            return AVERROR(ENOSYS);
+            return AVERROR(EINVAL);
         }
 
-#if FF_API_ASS_TIMING
-        if (!strncmp(ass, "Dialogue: ", 10)) {
-            int num;
-            dialog = ff_ass_split_dialog(s->ass_ctx, ass, 0, &num);
-            // TODO reindent
-        for (; dialog && num--; dialog++) {
-            webvtt_style_apply(s, dialog->style);
-            ff_ass_split_override_codes(&webvtt_callbacks, s, dialog->text);
-        }
-        } else {
-#endif
-            dialog = ff_ass_split_dialog2(s->ass_ctx, ass);
-            if (!dialog)
-                return AVERROR(ENOMEM);
-            webvtt_style_apply(s, dialog->style);
-            ff_ass_split_override_codes(&webvtt_callbacks, s, dialog->text);
-            ff_ass_free_dialog(&dialog);
-#if FF_API_ASS_TIMING
-        }
-#endif
+        dialog = ff_ass_split_dialog(s->ass_ctx, ass);
+        if (!dialog)
+            return AVERROR(ENOMEM);
+        webvtt_style_apply(s, dialog->style);
+        ff_ass_split_override_codes(&webvtt_callbacks, s, dialog->text);
+        ff_ass_free_dialog(&dialog);
     }
 
     if (!av_bprint_is_complete(&s->buffer))
@@ -200,7 +187,7 @@ static int webvtt_encode_frame(AVCodecContext *avctx,
 
     if (s->buffer.len > bufsize) {
         av_log(avctx, AV_LOG_ERROR, "Buffer too small for ASS event.\n");
-        return -1;
+        return AVERROR_BUFFER_TOO_SMALL;
     }
     memcpy(buf, s->buffer.str, s->buffer.len);
 
@@ -224,13 +211,14 @@ static av_cold int webvtt_encode_init(AVCodecContext *avctx)
     return s->ass_ctx ? 0 : AVERROR_INVALIDDATA;
 }
 
-AVCodec ff_webvtt_encoder = {
-    .name           = "webvtt",
-    .long_name      = NULL_IF_CONFIG_SMALL("WebVTT subtitle"),
-    .type           = AVMEDIA_TYPE_SUBTITLE,
-    .id             = AV_CODEC_ID_WEBVTT,
+const FFCodec ff_webvtt_encoder = {
+    .p.name         = "webvtt",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("WebVTT subtitle"),
+    .p.type         = AVMEDIA_TYPE_SUBTITLE,
+    .p.id           = AV_CODEC_ID_WEBVTT,
     .priv_data_size = sizeof(WebVTTContext),
     .init           = webvtt_encode_init,
-    .encode_sub     = webvtt_encode_frame,
+    FF_CODEC_ENCODE_SUB_CB(webvtt_encode_frame),
     .close          = webvtt_encode_close,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

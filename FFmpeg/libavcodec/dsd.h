@@ -24,9 +24,8 @@
 #ifndef AVCODEC_DSD_H
 #define AVCODEC_DSD_H
 
-#include "libavcodec/internal.h"
-#include "libavcodec/mathops.h"
-#include "avcodec.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #define HTAPS   48               /** number of FIR constants */
 #define FIFOSIZE 16              /** must be a power of two */
@@ -40,13 +39,13 @@
  * Per-channel buffer
  */
 typedef struct DSDContext {
-    unsigned char buf[FIFOSIZE];
+    uint8_t buf[FIFOSIZE];
     unsigned pos;
 } DSDContext;
 
 void ff_init_dsd_data(void);
 
 void ff_dsd2pcm_translate(DSDContext* s, size_t samples, int lsbf,
-                          const unsigned char *src, ptrdiff_t src_stride,
+                          const uint8_t *src, ptrdiff_t src_stride,
                           float *dst, ptrdiff_t dst_stride);
 #endif /* AVCODEC_DSD_H */

@@ -36,7 +36,6 @@
 
 #include "libavutil/internal.h"
 #include "libavutil/log.h"
-#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/time.h"
 #include "libavutil/parseutils.h"
@@ -157,11 +156,11 @@ static int fbdev_read_packet(AVFormatContext *avctx, AVPacket *pkt)
     uint8_t *pin, *pout;
 
     if (fbdev->time_frame == AV_NOPTS_VALUE)
-        fbdev->time_frame = av_gettime();
+        fbdev->time_frame = av_gettime_relative();
 
     /* wait based on the frame rate */
     while (1) {
-        curtime = av_gettime();
+        curtime = av_gettime_relative();
         delay = fbdev->time_frame - curtime;
         av_log(avctx, AV_LOG_TRACE,
                 "time_frame:%"PRId64" curtime:%"PRId64" delay:%"PRId64"\n",
@@ -186,7 +185,7 @@ static int fbdev_read_packet(AVFormatContext *avctx, AVPacket *pkt)
                "Error refreshing variable info: %s\n", av_err2str(AVERROR(errno)));
     }
 
-    pkt->pts = curtime;
+    pkt->pts = av_gettime();
 
     /* compute visible data offset */
     pin = fbdev->data + fbdev->bytes_per_pixel * fbdev->varinfo.xoffset +
@@ -232,7 +231,7 @@ static const AVClass fbdev_class = {
     .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT,
 };
 
-AVInputFormat ff_fbdev_demuxer = {
+const AVInputFormat ff_fbdev_demuxer = {
     .name           = "fbdev",
     .long_name      = NULL_IF_CONFIG_SMALL("Linux framebuffer"),
     .priv_data_size = sizeof(FBDevContext),

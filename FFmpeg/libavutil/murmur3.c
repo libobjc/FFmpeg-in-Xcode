@@ -17,6 +17,8 @@
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
+
+#include <stddef.h>
 #include <stdint.h>
 #include "mem.h"
 #include "intreadwrite.h"
@@ -89,11 +91,7 @@ static inline uint64_t update_h2(uint64_t k, uint64_t h1, uint64_t h2)
     return k;
 }
 
-#if FF_API_CRYPTO_SIZE_T
-void av_murmur3_update(AVMurMur3 *c, const uint8_t *src, int len)
-#else
 void av_murmur3_update(AVMurMur3 *c, const uint8_t *src, size_t len)
-#endif
 {
     const uint8_t *end;
     uint64_t h1 = c->h1, h2 = c->h2;

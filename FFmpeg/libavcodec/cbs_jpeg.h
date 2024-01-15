@@ -80,8 +80,8 @@ typedef struct JPEGRawScanHeader {
 typedef struct JPEGRawScan {
     JPEGRawScanHeader header;
     uint8_t          *data;
-    size_t            data_size;
     AVBufferRef      *data_ref;
+    size_t            data_size;
 } JPEGRawScan;
 
 typedef struct JPEGRawQuantisationTable {
@@ -99,7 +99,7 @@ typedef struct JPEGRawHuffmanTable {
     uint8_t  Tc;
     uint8_t  Th;
     uint8_t  L[16];
-    uint8_t  V[224];
+    uint8_t  V[256];
 } JPEGRawHuffmanTable;
 
 typedef struct JPEGRawHuffmanTableSpecification {
@@ -118,13 +118,6 @@ typedef struct JPEGRawComment {
     uint8_t     *Cm;
     AVBufferRef *Cm_ref;
 } JPEGRawComment;
-
-
-typedef struct CodedBitstreamJPEGContext {
-    // Write buffer.
-    uint8_t *write_buffer;
-    size_t write_buffer_size;
-} CodedBitstreamJPEGContext;
 
 
 #endif /* AVCODEC_CBS_JPEG_H */

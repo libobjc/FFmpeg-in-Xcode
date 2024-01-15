@@ -24,7 +24,9 @@
 
 #include "libavutil/buffer.h"
 
-#include "avcodec.h"
+#include "codec_id.h"
+#include "codec_par.h"
+#include "packet.h"
 
 
 /*
@@ -40,13 +42,16 @@
  * bitstream.
  */
 
+struct AVCodecContext;
 struct CodedBitstreamType;
 
 /**
  * The codec-specific type of a bitstream unit.
  *
+ * AV1: obu_type
  * H.264 / AVC: nal_unit_type
  * H.265 / HEVC: nal_unit_type
+ * JPEG: marker value (without 0xff prefix)
  * MPEG-2: start code value (without prefix)
  * VP9: unused, set to zero (every unit is a frame)
  */
@@ -194,7 +199,7 @@ typedef struct CodedBitstreamContext {
      * Types not in this list will be available in bitstream form only.
      * If NULL, all supported types will be decomposed.
      */
-    CodedBitstreamUnitType *decompose_unit_types;
+    const CodedBitstreamUnitType *decompose_unit_types;
     /**
      * Length of the decompose_unit_types array.
      */
@@ -210,6 +215,13 @@ typedef struct CodedBitstreamContext {
      * From AV_LOG_*; defaults to AV_LOG_TRACE.
      */
     int trace_level;
+
+    /**
+     * Write buffer. Used as intermediate buffer when writing units.
+     * For internal use of cbs only.
+     */
+    uint8_t *write_buffer;
+    size_t   write_buffer_size;
 } CodedBitstreamContext;
 
 
@@ -226,6 +238,11 @@ extern const enum AVCodecID ff_cbs_all_codec_ids[];
  */
 int ff_cbs_init(CodedBitstreamContext **ctx,
                 enum AVCodecID codec_id, void *log_ctx);
+
+/**
+ * Reset all internal state in a context.
+ */
+void ff_cbs_flush(CodedBitstreamContext *ctx);
 
 /**
  * Close a context and free all internal state.
@@ -247,6 +264,21 @@ void ff_cbs_close(CodedBitstreamContext **ctx);
 int ff_cbs_read_extradata(CodedBitstreamContext *ctx,
                           CodedBitstreamFragment *frag,
                           const AVCodecParameters *par);
+
+/**
+ * Read the extradata bitstream found in a codec context into a
+ * fragment, then split into units and decompose.
+ *
+ * This acts identical to ff_cbs_read_extradata() for the case where
+ * you already have a codec context.
+ */
+int ff_cbs_read_extradata_from_codec(CodedBitstreamContext *ctx,
+                                     CodedBitstreamFragment *frag,
+                                     const struct AVCodecContext *avctx);
+
+int ff_cbs_read_packet_side_data(CodedBitstreamContext *ctx,
+                                 CodedBitstreamFragment *frag,
+                                 const AVPacket *pkt);
 
 /**
  * Read the data bitstream from a packet into a fragment, then
@@ -323,34 +355,30 @@ int ff_cbs_write_packet(CodedBitstreamContext *ctx,
  * Free the units contained in a fragment as well as the fragment's
  * own data buffer, but not the units array itself.
  */
-void ff_cbs_fragment_reset(CodedBitstreamContext *ctx,
-                            CodedBitstreamFragment *frag);
+void ff_cbs_fragment_reset(CodedBitstreamFragment *frag);
 
 /**
  * Free the units array of a fragment in addition to what
  * ff_cbs_fragment_reset does.
  */
-void ff_cbs_fragment_free(CodedBitstreamContext *ctx,
-                          CodedBitstreamFragment *frag);
+void ff_cbs_fragment_free(CodedBitstreamFragment *frag);
 
 /**
  * Allocate a new internal content buffer of the given size in the unit.
  *
  * The content will be zeroed.
  */
-int ff_cbs_alloc_unit_content(CodedBitstreamContext *ctx,
-                              CodedBitstreamUnit *unit,
+int ff_cbs_alloc_unit_content(CodedBitstreamUnit *unit,
                               size_t size,
-                              void (*free)(void *unit, uint8_t *content));
+                              void (*free)(void *opaque, uint8_t *content));
 
 /**
- * Allocate a new internal data buffer of the given size in the unit.
+ * Allocate a new internal content buffer matching the type of the unit.
  *
- * The data buffer will have input padding.
+ * The content will be zeroed.
  */
-int ff_cbs_alloc_unit_data(CodedBitstreamContext *ctx,
-                           CodedBitstreamUnit *unit,
-                           size_t size);
+int ff_cbs_alloc_unit_content2(CodedBitstreamContext *ctx,
+                               CodedBitstreamUnit *unit);
 
 /**
  * Insert a new unit into a fragment with the given content.
@@ -358,22 +386,20 @@ int ff_cbs_alloc_unit_data(CodedBitstreamContext *ctx,
  * The content structure continues to be owned by the caller if
  * content_buf is not supplied.
  */
-int ff_cbs_insert_unit_content(CodedBitstreamContext *ctx,
-                               CodedBitstreamFragment *frag,
+int ff_cbs_insert_unit_content(CodedBitstreamFragment *frag,
                                int position,
                                CodedBitstreamUnitType type,
                                void *content,
                                AVBufferRef *content_buf);
 
 /**
- * Insert a new unit into a fragment with the given data bitstream.
+ * Add a new unit to a fragment with the given data bitstream.
  *
  * If data_buf is not supplied then data must have been allocated with
- * av_malloc() and will become owned by the unit after this call.
+ * av_malloc() and will on success become owned by the unit after this
+ * call or freed on error.
  */
-int ff_cbs_insert_unit_data(CodedBitstreamContext *ctx,
-                            CodedBitstreamFragment *frag,
-                            int position,
+int ff_cbs_append_unit_data(CodedBitstreamFragment *frag,
                             CodedBitstreamUnitType type,
                             uint8_t *data, size_t data_size,
                             AVBufferRef *data_buf);
@@ -383,9 +409,37 @@ int ff_cbs_insert_unit_data(CodedBitstreamContext *ctx,
  *
  * Requires position to be >= 0 and < frag->nb_units.
  */
-void ff_cbs_delete_unit(CodedBitstreamContext *ctx,
-                        CodedBitstreamFragment *frag,
+void ff_cbs_delete_unit(CodedBitstreamFragment *frag,
                         int position);
+
+
+/**
+ * Make the content of a unit refcounted.
+ *
+ * If the unit is not refcounted, this will do a deep copy of the unit
+ * content to new refcounted buffers.
+ *
+ * It is not valid to call this function on a unit which does not have
+ * decomposed content.
+ */
+int ff_cbs_make_unit_refcounted(CodedBitstreamContext *ctx,
+                                CodedBitstreamUnit *unit);
+
+/**
+ * Make the content of a unit writable so that internal fields can be
+ * modified.
+ *
+ * If it is known that there are no other references to the content of
+ * the unit, does nothing and returns success.  Otherwise (including the
+ * case where the unit content is not refcounted), it does a full clone
+ * of the content (including any internal buffers) to make a new copy,
+ * and replaces the existing references inside the unit with that.
+ *
+ * It is not valid to call this function on a unit which does not have
+ * decomposed content.
+ */
+int ff_cbs_make_unit_writable(CodedBitstreamContext *ctx,
+                              CodedBitstreamUnit *unit);
 
 
 #endif /* AVCODEC_CBS_H */

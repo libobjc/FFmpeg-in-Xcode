@@ -79,7 +79,7 @@ static int dxa_read_header(AVFormatContext *s)
     if(fps > 0){
         den = 1000;
         num = fps;
-    }else if (fps < 0){
+    }else if (fps < 0 && fps > INT_MIN){
         den = 100000;
         num = -fps;
     }else{
@@ -118,9 +118,12 @@ static int dxa_read_header(AVFormatContext *s)
             if(tag == MKTAG('d', 'a', 't', 'a')) break;
             avio_skip(pb, fsize);
         }
-        c->bpc = (fsize + c->frames - 1) / c->frames;
-        if(ast->codecpar->block_align)
+        c->bpc = (fsize + (int64_t)c->frames - 1) / c->frames;
+        if(ast->codecpar->block_align) {
+            if (c->bpc > INT_MAX - ast->codecpar->block_align + 1)
+                return AVERROR_INVALIDDATA;
             c->bpc = ((c->bpc + ast->codecpar->block_align - 1) / ast->codecpar->block_align) * ast->codecpar->block_align;
+        }
         c->bytes_left = fsize;
         c->wavpos = avio_tell(pb);
         avio_seek(pb, c->vidpos, SEEK_SET);
@@ -143,7 +146,7 @@ static int dxa_read_header(AVFormatContext *s)
     c->readvid = !c->has_sound;
     c->vidpos  = avio_tell(pb);
     s->start_time = 0;
-    s->duration = (int64_t)c->frames * AV_TIME_BASE * num / den;
+    s->duration = av_rescale(c->frames, AV_TIME_BASE * (int64_t)num, den);
     av_log(s, AV_LOG_DEBUG, "%d frame(s)\n",c->frames);
 
     return 0;
@@ -179,8 +182,8 @@ static int dxa_read_packet(AVFormatContext *s, AVPacket *pkt)
         tag = AV_RL32(buf);
         switch (tag) {
         case MKTAG('N', 'U', 'L', 'L'):
-            if(av_new_packet(pkt, 4 + pal_size) < 0)
-                return AVERROR(ENOMEM);
+            if ((ret = av_new_packet(pkt, 4 + pal_size)) < 0)
+                return ret;
             pkt->stream_index = 0;
             if(pal_size) memcpy(pkt->data, pal, pal_size);
             memcpy(pkt->data + pal_size, buf, 4);
@@ -204,12 +207,12 @@ static int dxa_read_packet(AVFormatContext *s, AVPacket *pkt)
                        size);
                 return AVERROR_INVALIDDATA;
             }
-            if(av_new_packet(pkt, size + DXA_EXTRA_SIZE + pal_size) < 0)
-                return AVERROR(ENOMEM);
+            ret = av_new_packet(pkt, size + DXA_EXTRA_SIZE + pal_size);
+            if (ret < 0)
+                return ret;
             memcpy(pkt->data + pal_size, buf, DXA_EXTRA_SIZE);
             ret = avio_read(s->pb, pkt->data + DXA_EXTRA_SIZE + pal_size, size);
             if(ret != size){
-                av_packet_unref(pkt);
                 return AVERROR(EIO);
             }
             if(pal_size) memcpy(pkt->data, pal, pal_size);
@@ -226,7 +229,7 @@ static int dxa_read_packet(AVFormatContext *s, AVPacket *pkt)
     return AVERROR_EOF;
 }
 
-AVInputFormat ff_dxa_demuxer = {
+const AVInputFormat ff_dxa_demuxer = {
     .name           = "dxa",
     .long_name      = NULL_IF_CONFIG_SMALL("DXA"),
     .priv_data_size = sizeof(DXAContext),

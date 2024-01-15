@@ -3683,6 +3683,7 @@
 		00CFA89C106B4BA100758660 /* ForceFeedback.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ForceFeedback.framework; path = System/Library/Frameworks/ForceFeedback.framework; sourceTree = SDKROOT; };
 		00D0D08310675DD9004B05EF /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		4D4820431F0F10B400EDC31C /* SDL_vulkan.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SDL_vulkan.h; sourceTree = "<group>"; };
+		4EDF079E2B55608C00046703 /* CoreAudioTypes.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudioTypes.framework; path = System/Library/Frameworks/CoreAudioTypes.framework; sourceTree = SDKROOT; };
 		5616CA49252BB2A5005D5928 /* SDL_url.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = SDL_url.c; sourceTree = "<group>"; };
 		5616CA4A252BB2A6005D5928 /* SDL_sysurl.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SDL_sysurl.h; sourceTree = "<group>"; };
 		5616CA4B252BB2A6005D5928 /* SDL_sysurl.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = SDL_sysurl.m; sourceTree = "<group>"; };
@@ -4487,6 +4488,7 @@
 		564624341FF821B70074AC87 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				4EDF079E2B55608C00046703 /* CoreAudioTypes.framework */,
 				F382339B2738ED6600F7F527 /* CoreBluetooth.framework */,
 				F376F7272559B77100CFC0BC /* CoreAudio.framework */,
 				F376F7252559B76800CFC0BC /* CoreFoundation.framework */,

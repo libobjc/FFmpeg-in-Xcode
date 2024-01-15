@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avcodec.h"
 #include "bsf.h"
+#include "bsf_internal.h"
 #include "get_bits.h"
 #include "ac3_parser_internal.h"
 
@@ -79,8 +79,8 @@ static const enum AVCodecID codec_ids[] = {
     AV_CODEC_ID_EAC3, AV_CODEC_ID_NONE,
 };
 
-const AVBitStreamFilter ff_eac3_core_bsf = {
-    .name      = "eac3_core",
-    .filter    = eac3_core_filter,
-    .codec_ids = codec_ids,
+const FFBitStreamFilter ff_eac3_core_bsf = {
+    .p.name      = "eac3_core",
+    .p.codec_ids = codec_ids,
+    .filter      = eac3_core_filter,
 };

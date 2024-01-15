@@ -23,10 +23,10 @@
  * libSDL2 output device
  */
 
-#import <SDL2/SDL.h>
-#import <SDL2/SDL_thread.h>
-//#include <SDL.h>
-//#include <SDL_thread.h>
+// Edit by Single
+#include <SDL2/SDL.h>
+// Edit by Single
+#include <SDL2/SDL_thread.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/imgutils.h"
@@ -357,7 +357,7 @@ static const AVClass sdl2_class = {
     .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_OUTPUT,
 };
 
-AVOutputFormat ff_sdl2_muxer = {
+const AVOutputFormat ff_sdl2_muxer = {
     .name           = "sdl,sdl2",
     .long_name      = NULL_IF_CONFIG_SMALL("SDL2 output device"),
     .priv_data_size = sizeof(SDLContext),

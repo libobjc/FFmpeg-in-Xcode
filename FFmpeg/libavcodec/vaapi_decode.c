@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/pixdesc.h"
@@ -24,6 +26,7 @@
 #include "decode.h"
 #include "internal.h"
 #include "vaapi_decode.h"
+#include "vaapi_hevc.h"
 
 
 int ff_vaapi_decode_make_param_buffer(AVCodecContext *avctx,
@@ -256,6 +259,10 @@ static const struct {
 #ifdef VA_FOURCC_YV16
     MAP(YV16, YUV422P),
 #endif
+    MAP(YUY2, YUYV422),
+#ifdef VA_FOURCC_Y210
+    MAP(Y210,    Y210),
+#endif
     // 4:4:0
     MAP(422V, YUV440P),
     // 4:4:4
@@ -364,8 +371,9 @@ static const struct {
     enum AVCodecID codec_id;
     int codec_profile;
     VAProfile va_profile;
+    VAProfile (*profile_parser)(AVCodecContext *avctx);
 } vaapi_profile_map[] = {
-#define MAP(c, p, v) { AV_CODEC_ID_ ## c, FF_PROFILE_ ## p, VAProfile ## v }
+#define MAP(c, p, v, ...) { AV_CODEC_ID_ ## c, FF_PROFILE_ ## p, VAProfile ## v, __VA_ARGS__ }
     MAP(MPEG2VIDEO,  MPEG2_SIMPLE,    MPEG2Simple ),
     MAP(MPEG2VIDEO,  MPEG2_MAIN,      MPEG2Main   ),
     MAP(H263,        UNKNOWN,         H263Baseline),
@@ -380,6 +388,12 @@ static const struct {
 #if VA_CHECK_VERSION(0, 37, 0)
     MAP(HEVC,        HEVC_MAIN,       HEVCMain    ),
     MAP(HEVC,        HEVC_MAIN_10,    HEVCMain10  ),
+    MAP(HEVC,        HEVC_MAIN_STILL_PICTURE,
+                                      HEVCMain    ),
+#endif
+#if VA_CHECK_VERSION(1, 2, 0) && CONFIG_HEVC_VAAPI_HWACCEL
+    MAP(HEVC,        HEVC_REXT,       None,
+                 ff_vaapi_parse_hevc_rext_profile ),
 #endif
     MAP(MJPEG,       MJPEG_HUFFMAN_BASELINE_DCT,
                                       JPEGBaseline),
@@ -398,6 +412,11 @@ static const struct {
 #if VA_CHECK_VERSION(0, 39, 0)
     MAP(VP9,         VP9_2,           VP9Profile2 ),
 #endif
+#if VA_CHECK_VERSION(1, 8, 0)
+    MAP(AV1,         AV1_MAIN,        AV1Profile0),
+    MAP(AV1,         AV1_HIGH,        AV1Profile1),
+#endif
+
 #undef MAP
 };
 
@@ -415,8 +434,8 @@ static int vaapi_decode_make_config(AVCodecContext *avctx,
     VAStatus vas;
     int err, i, j;
     const AVCodecDescriptor *codec_desc;
-    VAProfile *profile_list = NULL, matched_va_profile;
-    int profile_count, exact_match, matched_ff_profile;
+    VAProfile *profile_list = NULL, matched_va_profile, va_profile;
+    int profile_count, exact_match, matched_ff_profile, codec_profile;
 
     AVHWDeviceContext    *device = (AVHWDeviceContext*)device_ref->data;
     AVVAAPIDeviceContext *hwctx = device->hwctx;
@@ -454,15 +473,21 @@ static int vaapi_decode_make_config(AVCodecContext *avctx,
         if (avctx->profile == vaapi_profile_map[i].codec_profile ||
             vaapi_profile_map[i].codec_profile == FF_PROFILE_UNKNOWN)
             profile_match = 1;
+
+        va_profile = vaapi_profile_map[i].profile_parser ?
+                     vaapi_profile_map[i].profile_parser(avctx) :
+                     vaapi_profile_map[i].va_profile;
+        codec_profile = vaapi_profile_map[i].codec_profile;
+
         for (j = 0; j < profile_count; j++) {
-            if (vaapi_profile_map[i].va_profile == profile_list[j]) {
+            if (va_profile == profile_list[j]) {
                 exact_match = profile_match;
                 break;
             }
         }
         if (j < profile_count) {
-            matched_va_profile = vaapi_profile_map[i].va_profile;
-            matched_ff_profile = vaapi_profile_map[i].codec_profile;
+            matched_va_profile = va_profile;
+            matched_ff_profile = codec_profile;
             if (exact_match)
                 break;
         }
@@ -554,6 +579,7 @@ static int vaapi_decode_make_config(AVCodecContext *avctx,
         switch (avctx->codec_id) {
         case AV_CODEC_ID_H264:
         case AV_CODEC_ID_HEVC:
+        case AV_CODEC_ID_AV1:
             frames->initial_pool_size += 16;
             break;
         case AV_CODEC_ID_VP9:
@@ -616,46 +642,6 @@ int ff_vaapi_decode_init(AVCodecContext *avctx)
     ctx->va_config  = VA_INVALID_ID;
     ctx->va_context = VA_INVALID_ID;
 
-#if FF_API_STRUCT_VAAPI_CONTEXT
-    if (avctx->hwaccel_context) {
-        av_log(avctx, AV_LOG_WARNING, "Using deprecated struct "
-               "vaapi_context in decode.\n");
-
-        ctx->have_old_context = 1;
-        ctx->old_context = avctx->hwaccel_context;
-
-        // Really we only want the VAAPI device context, but this
-        // allocates a whole generic device context because we don't
-        // have any other way to determine how big it should be.
-        ctx->device_ref =
-            av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VAAPI);
-        if (!ctx->device_ref) {
-            err = AVERROR(ENOMEM);
-            goto fail;
-        }
-        ctx->device = (AVHWDeviceContext*)ctx->device_ref->data;
-        ctx->hwctx  = ctx->device->hwctx;
-
-        ctx->hwctx->display = ctx->old_context->display;
-
-        // The old VAAPI decode setup assumed this quirk was always
-        // present, so set it here to avoid the behaviour changing.
-        ctx->hwctx->driver_quirks =
-            AV_VAAPI_DRIVER_QUIRK_RENDER_PARAM_BUFFERS;
-
-    }
-#endif
-
-#if FF_API_STRUCT_VAAPI_CONTEXT
-    if (ctx->have_old_context) {
-        ctx->va_config  = ctx->old_context->config_id;
-        ctx->va_context = ctx->old_context->context_id;
-
-        av_log(avctx, AV_LOG_DEBUG, "Using user-supplied decoder "
-               "context: %#x/%#x.\n", ctx->va_config, ctx->va_context);
-    } else {
-#endif
-
     err = ff_decode_get_hw_frames_ctx(avctx, AV_HWDEVICE_TYPE_VAAPI);
     if (err < 0)
         goto fail;
@@ -666,7 +652,7 @@ int ff_vaapi_decode_init(AVCodecContext *avctx)
     ctx->hwctx  = ctx->device->hwctx;
 
     err = vaapi_decode_make_config(avctx, ctx->frames->device_ref,
-                                   &ctx->va_config, avctx->hw_frames_ctx);
+                                   &ctx->va_config, NULL);
     if (err)
         goto fail;
 
@@ -685,9 +671,6 @@ int ff_vaapi_decode_init(AVCodecContext *avctx)
 
     av_log(avctx, AV_LOG_DEBUG, "Decode context initialised: "
            "%#x/%#x.\n", ctx->va_config, ctx->va_context);
-#if FF_API_STRUCT_VAAPI_CONTEXT
-    }
-#endif
 
     return 0;
 
@@ -700,12 +683,6 @@ int ff_vaapi_decode_uninit(AVCodecContext *avctx)
 {
     VAAPIDecodeContext *ctx = avctx->internal->hwaccel_priv_data;
     VAStatus vas;
-
-#if FF_API_STRUCT_VAAPI_CONTEXT
-    if (ctx->have_old_context) {
-        av_buffer_unref(&ctx->device_ref);
-    } else {
-#endif
 
     if (ctx->va_context != VA_INVALID_ID) {
         vas = vaDestroyContext(ctx->hwctx->display, ctx->va_context);
@@ -723,10 +700,6 @@ int ff_vaapi_decode_uninit(AVCodecContext *avctx)
                    ctx->va_config, vas, vaErrorStr(vas));
         }
     }
-
-#if FF_API_STRUCT_VAAPI_CONTEXT
-    }
-#endif
 
     return 0;
 }

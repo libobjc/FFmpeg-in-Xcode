@@ -160,7 +160,7 @@ static int str_read_packet(AVFormatContext *s,
     AVIOContext *pb = s->pb;
     StrDemuxContext *str = s->priv_data;
     unsigned char sector[RAW_CD_SECTOR_SIZE];
-    int channel;
+    int channel, ret;
     AVPacket *pkt;
     AVStream *st;
 
@@ -213,8 +213,9 @@ static int str_read_packet(AVFormatContext *s,
                     if(pkt->data)
                         av_log(s, AV_LOG_ERROR, "mismatching sector_count\n");
                     av_packet_unref(pkt);
-                    if (av_new_packet(pkt, sector_count*VIDEO_DATA_CHUNK_SIZE))
-                        return AVERROR(EIO);
+                    ret = av_new_packet(pkt, sector_count * VIDEO_DATA_CHUNK_SIZE);
+                    if (ret < 0)
+                        return ret;
                     memset(pkt->data, 0, sector_count*VIDEO_DATA_CHUNK_SIZE);
 
                     pkt->pos= avio_tell(pb) - RAW_CD_SECTOR_SIZE;
@@ -251,24 +252,18 @@ static int str_read_packet(AVFormatContext *s,
                 st->codecpar->codec_type  = AVMEDIA_TYPE_AUDIO;
                 st->codecpar->codec_id    = AV_CODEC_ID_ADPCM_XA;
                 st->codecpar->codec_tag   = 0;  /* no fourcc */
-                if (fmt & 1) {
-                    st->codecpar->channels       = 2;
-                    st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
-                } else {
-                    st->codecpar->channels       = 1;
-                    st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
-                }
+                av_channel_layout_default(&st->codecpar->ch_layout, (fmt & 1) + 1);
                 st->codecpar->sample_rate = (fmt&4)?18900:37800;
             //    st->codecpar->bit_rate = 0; //FIXME;
                 st->codecpar->block_align = 128;
 
-                avpriv_set_pts_info(st, 64, 18 * 224 / st->codecpar->channels,
+                avpriv_set_pts_info(st, 64, 18 * 224 / st->codecpar->ch_layout.nb_channels,
                                     st->codecpar->sample_rate);
                 st->start_time = 0;
             }
             pkt = ret_pkt;
-            if (av_new_packet(pkt, 2304))
-                return AVERROR(EIO);
+            if ((ret = av_new_packet(pkt, 2304)) < 0)
+                return ret;
             memcpy(pkt->data,sector+24,2304);
 
             pkt->stream_index =
@@ -298,7 +293,7 @@ static int str_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_str_demuxer = {
+const AVInputFormat ff_str_demuxer = {
     .name           = "psxstr",
     .long_name      = NULL_IF_CONFIG_SMALL("Sony Playstation STR"),
     .priv_data_size = sizeof(StrDemuxContext),

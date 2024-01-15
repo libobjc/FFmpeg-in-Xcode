@@ -51,6 +51,7 @@ typedef struct TLSContext {
     gnutls_session_t session;
     gnutls_certificate_credentials_t cred;
     int need_shutdown;
+    int io_err;
 } TLSContext;
 
 void ff_gnutls_init(void)
@@ -73,6 +74,7 @@ void ff_gnutls_deinit(void)
 
 static int print_tls_error(URLContext *h, int ret)
 {
+    TLSContext *c = h->priv_data;
     switch (ret) {
     case GNUTLS_E_AGAIN:
         return AVERROR(EAGAIN);
@@ -88,6 +90,12 @@ static int print_tls_error(URLContext *h, int ret)
         av_log(h, AV_LOG_ERROR, "%s\n", gnutls_strerror(ret));
         break;
     }
+    if (c->io_err) {
+        av_log(h, AV_LOG_ERROR, "IO error: %s\n", av_err2str(c->io_err));
+        ret = c->io_err;
+        c->io_err = 0;
+        return ret;
+    }
     return AVERROR(EIO);
 }
 
@@ -100,8 +108,7 @@ static int tls_close(URLContext *h)
         gnutls_deinit(c->session);
     if (c->cred)
         gnutls_certificate_free_credentials(c->cred);
-    if (c->tls_shared.tcp)
-        ffurl_close(c->tls_shared.tcp);
+    ffurl_closep(&c->tls_shared.tcp);
     ff_gnutls_deinit();
     return 0;
 }
@@ -109,32 +116,36 @@ static int tls_close(URLContext *h)
 static ssize_t gnutls_url_pull(gnutls_transport_ptr_t transport,
                                void *buf, size_t len)
 {
-    URLContext *h = (URLContext*) transport;
-    int ret = ffurl_read(h, buf, len);
+    TLSContext *c = (TLSContext*) transport;
+    int ret = ffurl_read(c->tls_shared.tcp, buf, len);
     if (ret >= 0)
         return ret;
     if (ret == AVERROR_EXIT)
         return 0;
-    if (ret == AVERROR(EAGAIN))
+    if (ret == AVERROR(EAGAIN)) {
         errno = EAGAIN;
-    else
+    } else {
         errno = EIO;
+        c->io_err = ret;
+    }
     return -1;
 }
 
 static ssize_t gnutls_url_push(gnutls_transport_ptr_t transport,
                                const void *buf, size_t len)
 {
-    URLContext *h = (URLContext*) transport;
-    int ret = ffurl_write(h, buf, len);
+    TLSContext *c = (TLSContext*) transport;
+    int ret = ffurl_write(c->tls_shared.tcp, buf, len);
     if (ret >= 0)
         return ret;
     if (ret == AVERROR_EXIT)
         return 0;
-    if (ret == AVERROR(EAGAIN))
+    if (ret == AVERROR(EAGAIN)) {
         errno = EAGAIN;
-    else
+    } else {
         errno = EIO;
+        c->io_err = ret;
+    }
     return -1;
 }
 
@@ -180,9 +191,14 @@ static int tls_open(URLContext *h, const char *uri, int flags, AVDictionary **op
     gnutls_credentials_set(p->session, GNUTLS_CRD_CERTIFICATE, p->cred);
     gnutls_transport_set_pull_function(p->session, gnutls_url_pull);
     gnutls_transport_set_push_function(p->session, gnutls_url_push);
-    gnutls_transport_set_ptr(p->session, c->tcp);
-    gnutls_priority_set_direct(p->session, "NORMAL", NULL);
+    gnutls_transport_set_ptr(p->session, p);
+    gnutls_set_default_priority(p->session);
     do {
+        if (ff_check_interrupt(&h->interrupt_callback)) {
+            ret = AVERROR_EXIT;
+            goto fail;
+        }
+
         ret = gnutls_handshake(p->session);
         if (gnutls_error_is_fatal(ret)) {
             ret = print_tls_error(h, ret);
@@ -265,6 +281,12 @@ static int tls_get_file_handle(URLContext *h)
     return ffurl_get_file_handle(c->tls_shared.tcp);
 }
 
+static int tls_get_short_seek(URLContext *h)
+{
+    TLSContext *s = h->priv_data;
+    return ffurl_get_short_seek(s->tls_shared.tcp);
+}
+
 static const AVOption options[] = {
     TLS_COMMON_OPTIONS(TLSContext, tls_shared),
     { NULL }
@@ -284,6 +306,7 @@ const URLProtocol ff_tls_protocol = {
     .url_write      = tls_write,
     .url_close      = tls_close,
     .url_get_file_handle = tls_get_file_handle,
+    .url_get_short_seek  = tls_get_short_seek,
     .priv_data_size = sizeof(TLSContext),
     .flags          = URL_PROTOCOL_FLAG_NETWORK,
     .priv_data_class = &tls_class,

@@ -28,7 +28,7 @@
 #include <unistd.h>
 #endif
 #elif defined(__OpenBSD__)
-#include <sys/param.h>
+#include <sys/types.h>
 #include <sys/sysctl.h>
 #include <machine/cpu.h>
 #elif defined(__AMIGAOS4__)
@@ -95,12 +95,15 @@ int ff_get_cpu_flags_ppc(void)
 #endif
                 if (ret & AV_CPU_FLAG_VSX)
                     av_assert0(ret & AV_CPU_FLAG_ALTIVEC);
-            } else if (buf[i] == AT_HWCAP2) {
+            }
+#ifdef AT_HWCAP2 /* not introduced until glibc 2.18 */
+            else if (buf[i] == AT_HWCAP2) {
 #ifdef PPC_FEATURE2_ARCH_2_07
                 if (buf[i + 1] & PPC_FEATURE2_ARCH_2_07)
                     ret |= AV_CPU_FLAG_POWER8;
 #endif
             }
+#endif /* AT_HWCAP2 */
         }
     }
 

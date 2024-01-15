@@ -92,8 +92,7 @@ int ff_h2645_extract_rbsp(const uint8_t *src, int length,
     } else if (i > length)
         i = length;
 
-    nal->rbsp_buffer = &rbsp->rbsp_buffer[rbsp->rbsp_buffer_size];
-    dst = nal->rbsp_buffer;
+    dst = &rbsp->rbsp_buffer[rbsp->rbsp_buffer_size];
 
     memcpy(dst, src, i);
     si = di = i;
@@ -146,7 +145,7 @@ nsc:
     return si;
 }
 
-static const char *hevc_nal_type_name[64] = {
+static const char *const hevc_nal_type_name[64] = {
     "TRAIL_N", // HEVC_NAL_TRAIL_N
     "TRAIL_R", // HEVC_NAL_TRAIL_R
     "TSA_N", // HEVC_NAL_TSA_N
@@ -169,8 +168,8 @@ static const char *hevc_nal_type_name[64] = {
     "IDR_W_RADL", // HEVC_NAL_IDR_W_RADL
     "IDR_N_LP", // HEVC_NAL_IDR_N_LP
     "CRA_NUT", // HEVC_NAL_CRA_NUT
-    "IRAP_IRAP_VCL22", // HEVC_NAL_IRAP_VCL22
-    "IRAP_IRAP_VCL23", // HEVC_NAL_IRAP_VCL23
+    "RSV_IRAP_VCL22", // HEVC_NAL_RSV_IRAP_VCL22
+    "RSV_IRAP_VCL23", // HEVC_NAL_RSV_IRAP_VCL23
     "RSV_VCL24", // HEVC_NAL_RSV_VCL24
     "RSV_VCL25", // HEVC_NAL_RSV_VCL25
     "RSV_VCL26", // HEVC_NAL_RSV_VCL26
@@ -219,7 +218,7 @@ static const char *hevc_nal_unit_name(int nal_type)
     return hevc_nal_type_name[nal_type];
 }
 
-static const char *h264_nal_type_name[32] = {
+static const char *const h264_nal_type_name[32] = {
     "Unspecified 0", //H264_NAL_UNSPECIFIED
     "Coded slice of a non-IDR picture", // H264_NAL_SLICE
     "Coded slice data partition A", // H264_NAL_DPA
@@ -260,10 +259,10 @@ static const char *h264_nal_unit_name(int nal_type)
     return h264_nal_type_name[nal_type];
 }
 
-static int get_bit_length(H2645NAL *nal, int skip_trailing_zeros)
+static int get_bit_length(H2645NAL *nal, int min_size, int skip_trailing_zeros)
 {
     int size = nal->size;
-    int v;
+    int trailing_padding = 0;
 
     while (skip_trailing_zeros && size > 0 && nal->data[size - 1] == 0)
         size--;
@@ -271,44 +270,48 @@ static int get_bit_length(H2645NAL *nal, int skip_trailing_zeros)
     if (!size)
         return 0;
 
-    v = nal->data[size - 1];
+    if (size <= min_size) {
+        if (nal->size < min_size)
+            return AVERROR_INVALIDDATA;
+        size = min_size;
+    } else {
+        int v = nal->data[size - 1];
+        /* remove the stop bit and following trailing zeros,
+         * or nothing for damaged bitstreams */
+        if (v)
+            trailing_padding = ff_ctz(v) + 1;
+    }
 
     if (size > INT_MAX / 8)
         return AVERROR(ERANGE);
     size *= 8;
 
-    /* remove the stop bit and following trailing zeros,
-     * or nothing for damaged bitstreams */
-    if (v)
-        size -= ff_ctz(v) + 1;
-
-    return size;
+    return size - trailing_padding;
 }
 
 /**
  * @return AVERROR_INVALIDDATA if the packet is not a valid NAL unit,
- * 0 if the unit should be skipped, 1 otherwise
+ * 0 otherwise
  */
 static int hevc_parse_nal_header(H2645NAL *nal, void *logctx)
 {
     GetBitContext *gb = &nal->gb;
-    int nuh_layer_id;
 
     if (get_bits1(gb) != 0)
         return AVERROR_INVALIDDATA;
 
     nal->type = get_bits(gb, 6);
 
-    nuh_layer_id   = get_bits(gb, 6);
+    nal->nuh_layer_id = get_bits(gb, 6);
     nal->temporal_id = get_bits(gb, 3) - 1;
     if (nal->temporal_id < 0)
         return AVERROR_INVALIDDATA;
 
     av_log(logctx, AV_LOG_DEBUG,
            "nal_unit_type: %d(%s), nuh_layer_id: %d, temporal_id: %d\n",
-           nal->type, hevc_nal_unit_name(nal->type), nuh_layer_id, nal->temporal_id);
+           nal->type, hevc_nal_unit_name(nal->type), nal->nuh_layer_id, nal->temporal_id);
 
-    return nuh_layer_id == 0;
+    return 0;
 }
 
 static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
@@ -325,7 +328,7 @@ static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
            "nal_unit_type: %d(%s), nal_ref_idc: %d\n",
            nal->type, h264_nal_unit_name(nal->type), nal->ref_idc);
 
-    return 1;
+    return 0;
 }
 
 static int find_next_start_code(const uint8_t *buf, const uint8_t *next_avc)
@@ -345,13 +348,18 @@ static int find_next_start_code(const uint8_t *buf, const uint8_t *next_avc)
 
 static void alloc_rbsp_buffer(H2645RBSP *rbsp, unsigned int size, int use_ref)
 {
+    int min_size = size;
+
     if (size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
         goto fail;
     size += AV_INPUT_BUFFER_PADDING_SIZE;
 
     if (rbsp->rbsp_buffer_alloc_size >= size &&
-        (!rbsp->rbsp_buffer_ref || av_buffer_is_writable(rbsp->rbsp_buffer_ref)))
+        (!rbsp->rbsp_buffer_ref || av_buffer_is_writable(rbsp->rbsp_buffer_ref))) {
+        av_assert0(rbsp->rbsp_buffer);
+        memset(rbsp->rbsp_buffer + min_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         return;
+    }
 
     size = FFMIN(size + size / 16 + 32, INT_MAX);
 
@@ -360,7 +368,7 @@ static void alloc_rbsp_buffer(H2645RBSP *rbsp, unsigned int size, int use_ref)
     else
         av_free(rbsp->rbsp_buffer);
 
-    rbsp->rbsp_buffer = av_malloc(size);
+    rbsp->rbsp_buffer = av_mallocz(size);
     if (!rbsp->rbsp_buffer)
         goto fail;
     rbsp->rbsp_buffer_alloc_size = size;
@@ -450,17 +458,20 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
 
         if (pkt->nals_allocated < pkt->nb_nals + 1) {
             int new_size = pkt->nals_allocated + 1;
-            void *tmp = av_realloc_array(pkt->nals, new_size, sizeof(*pkt->nals));
+            void *tmp;
 
+            if (new_size >= INT_MAX / sizeof(*pkt->nals))
+                return AVERROR(ENOMEM);
+
+            tmp = av_fast_realloc(pkt->nals, &pkt->nal_buffer_size, new_size * sizeof(*pkt->nals));
             if (!tmp)
                 return AVERROR(ENOMEM);
 
             pkt->nals = tmp;
-            memset(pkt->nals + pkt->nals_allocated, 0,
-                   (new_size - pkt->nals_allocated) * sizeof(*pkt->nals));
+            memset(pkt->nals + pkt->nals_allocated, 0, sizeof(*pkt->nals));
 
             nal = &pkt->nals[pkt->nb_nals];
-            nal->skipped_bytes_pos_size = 1024; // initial buffer size
+            nal->skipped_bytes_pos_size = FFMIN(1024, extract_length/3+1); // initial buffer size
             nal->skipped_bytes_pos = av_malloc_array(nal->skipped_bytes_pos_size, sizeof(*nal->skipped_bytes_pos));
             if (!nal->skipped_bytes_pos)
                 return AVERROR(ENOMEM);
@@ -478,8 +489,6 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
                    "NALFF: Consumed only %d bytes instead of %d\n",
                    consumed, extract_length);
 
-        pkt->nb_nals++;
-
         bytestream2_skip(&bc, consumed);
 
         /* see commit 3566042a0 */
@@ -487,23 +496,30 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
             bytestream2_peek_be32(&bc) == 0x000001E0)
             skip_trailing_zeros = 0;
 
-        nal->size_bits = get_bit_length(nal, skip_trailing_zeros);
+        nal->size_bits = get_bit_length(nal, 1 + (codec_id == AV_CODEC_ID_HEVC),
+                                        skip_trailing_zeros);
+
+        if (nal->size <= 0 || nal->size_bits <= 0)
+            continue;
 
         ret = init_get_bits(&nal->gb, nal->data, nal->size_bits);
         if (ret < 0)
             return ret;
 
+        /* Reset type in case it contains a stale value from a previously parsed NAL */
+        nal->type = 0;
+
         if (codec_id == AV_CODEC_ID_HEVC)
             ret = hevc_parse_nal_header(nal, logctx);
         else
             ret = h264_parse_nal_header(nal, logctx);
-        if (ret <= 0 || nal->size <= 0 || nal->size_bits <= 0) {
-            if (ret < 0) {
-                av_log(logctx, AV_LOG_WARNING, "Invalid NAL unit %d, skipping.\n",
-                       nal->type);
-            }
-            pkt->nb_nals--;
+        if (ret < 0) {
+            av_log(logctx, AV_LOG_WARNING, "Invalid NAL unit %d, skipping.\n",
+                   nal->type);
+            continue;
         }
+
+        pkt->nb_nals++;
     }
 
     return 0;
@@ -516,7 +532,7 @@ void ff_h2645_packet_uninit(H2645Packet *pkt)
         av_freep(&pkt->nals[i].skipped_bytes_pos);
     }
     av_freep(&pkt->nals);
-    pkt->nals_allocated = 0;
+    pkt->nals_allocated = pkt->nal_buffer_size = 0;
     if (pkt->rbsp.rbsp_buffer_ref) {
         av_buffer_unref(&pkt->rbsp.rbsp_buffer_ref);
         pkt->rbsp.rbsp_buffer = NULL;

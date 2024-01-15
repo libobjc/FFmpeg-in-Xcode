@@ -40,30 +40,23 @@ typedef struct FieldOrderContext {
 
 static int query_formats(AVFilterContext *ctx)
 {
+    const AVPixFmtDescriptor *desc = NULL;
     AVFilterFormats  *formats;
-    enum AVPixelFormat pix_fmt;
     int              ret;
 
     /** accept any input pixel format that is not hardware accelerated, not
      *  a bitstream format, and does not have vertically sub-sampled chroma */
-    if (ctx->inputs[0]) {
-        const AVPixFmtDescriptor *desc = NULL;
-        formats = NULL;
-        while ((desc = av_pix_fmt_desc_next(desc))) {
-            pix_fmt = av_pix_fmt_desc_get_id(desc);
-            if (!(desc->flags & AV_PIX_FMT_FLAG_HWACCEL ||
-                  desc->flags & AV_PIX_FMT_FLAG_PAL     ||
-                  desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) &&
-                desc->nb_components && !desc->log2_chroma_h &&
-                (ret = ff_add_format(&formats, pix_fmt)) < 0)
-                return ret;
-        }
-        if ((ret = ff_formats_ref(formats, &ctx->inputs[0]->out_formats)) < 0 ||
-            (ret = ff_formats_ref(formats, &ctx->outputs[0]->in_formats)) < 0)
+    formats = NULL;
+    while ((desc = av_pix_fmt_desc_next(desc))) {
+        enum AVPixelFormat pix_fmt = av_pix_fmt_desc_get_id(desc);
+        if (!(desc->flags & AV_PIX_FMT_FLAG_HWACCEL ||
+                desc->flags & AV_PIX_FMT_FLAG_PAL     ||
+                desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) &&
+            desc->nb_components && !desc->log2_chroma_h &&
+            (ret = ff_add_format(&formats, pix_fmt)) < 0)
             return ret;
     }
-
-    return 0;
+    return ff_set_common_formats(ctx, formats);
 }
 
 static int config_input(AVFilterLink *inlink)
@@ -108,8 +101,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
             s->dst_tff ? "up" : "down");
     h = frame->height;
     for (plane = 0; plane < 4 && frame->data[plane] && frame->linesize[plane]; plane++) {
-        dst_line_step = out->linesize[plane];
-        src_line_step = frame->linesize[plane];
+        dst_line_step = out->linesize[plane] * (h > 2);
+        src_line_step = frame->linesize[plane] * (h > 2);
         line_size = s->line_size[plane];
         dst = out->data[plane];
         src = frame->data[plane];
@@ -173,7 +166,6 @@ static const AVFilterPad avfilter_vf_fieldorder_inputs[] = {
         .config_props = config_input,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad avfilter_vf_fieldorder_outputs[] = {
@@ -181,16 +173,15 @@ static const AVFilterPad avfilter_vf_fieldorder_outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_fieldorder = {
+const AVFilter ff_vf_fieldorder = {
     .name          = "fieldorder",
     .description   = NULL_IF_CONFIG_SMALL("Set the field order."),
     .priv_size     = sizeof(FieldOrderContext),
     .priv_class    = &fieldorder_class,
-    .query_formats = query_formats,
-    .inputs        = avfilter_vf_fieldorder_inputs,
-    .outputs       = avfilter_vf_fieldorder_outputs,
+    FILTER_INPUTS(avfilter_vf_fieldorder_inputs),
+    FILTER_OUTPUTS(avfilter_vf_fieldorder_outputs),
+    FILTER_QUERY_FUNC(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

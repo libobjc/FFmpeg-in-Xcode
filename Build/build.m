@@ -92,15 +92,14 @@ NSString * SGFAppend(NSString *s, NSString *a)
  */
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        NSString *s = @"/Users/single/Documents/project/github/FFmpeg/";
-        NSString *d = @"/Users/single/Documents/project/github/FFmpeg-in-Xcode/FFmpeg/";
+        NSString *s = @"/Users/gary/Desktop/Coding/FFmpeg";
+        NSString *d = @"/Users/gary/Desktop/Coding/FFmpeg-in-Xcode/FFmpeg";
         
         NSArray * dirs = @[@"fftools",
                            @"libavcodec",
                            @"libavdevice",
                            @"libavfilter",
                            @"libavformat",
-                           @"libavresample",
                            @"libavutil",
                            @"libpostproc",
                            @"libswresample",
@@ -115,12 +114,14 @@ int main(int argc, const char * argv[]) {
             }
             SGFRemove(SGFAppend(d, @"compat"));
             SGFRemove(SGFAppend(d, @"config.h"));
+            SGFRemove(SGFAppend(d, @"config_components.h"));
             // Copy
             for (NSString * o in dirs) {
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".h", nil);
                 SGFCopyExt(SGFAppend(s, o), SGFAppend(d, o), YES, @".o", @[@".c", @".m"]);
             }
             SGFCopy(SGFAppend(s, @"config.h"), SGFAppend(d, @"config.h"), YES);
+            SGFCopy(SGFAppend(s, @"config_components.h"), SGFAppend(d, @"config_components.h"), YES);
             SGFRemove(SGFAppend(d, @"libavutil/time.h"));
         }
         if (strcmp(argv[1], "build-2") == 0) {
@@ -139,6 +140,18 @@ int main(int argc, const char * argv[]) {
             SGFReplace(SGFAppend(d, @"libavfilter/vsrc_mandelbrot.c"),
                        @"typedef struct Point {",
                        @"// Edit by Single\ntypedef struct {");
+            SGFReplace(SGFAppend(d, @"libavdevice/sdl2.c"),
+                       @"#include <SDL.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL.h>");
+            SGFReplace(SGFAppend(d, @"libavdevice/sdl2.c"),
+                       @"#include <SDL_thread.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL_thread.h>");
+            SGFReplace(SGFAppend(d, @"fftools/ffplay.c"),
+                       @"#include <SDL.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL.h>");
+            SGFReplace(SGFAppend(d, @"fftools/ffplay.c"),
+                       @"#include <SDL_thread.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL_thread.h>");
         }
     }
     return 0;

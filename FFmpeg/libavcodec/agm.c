@@ -26,8 +26,11 @@
 
 #define BITSTREAM_READER_LE
 
+#include "libavutil/mem_internal.h"
+
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "copy_block.h"
 #include "get_bits.h"
 #include "idctdsp.h"
@@ -423,8 +426,8 @@ static int decode_inter_plane(AGMContext *s, GetBitContext *gb, int size,
                 int map = s->map[x];
 
                 if (orig_mv_x >= -32) {
-                    if (y * 8 + mv_y < 0 || y * 8 + mv_y >= h ||
-                        x * 8 + mv_x < 0 || x * 8 + mv_x >= w)
+                    if (y * 8 + mv_y < 0 || y * 8 + mv_y + 8 > h ||
+                        x * 8 + mv_x < 0 || x * 8 + mv_x + 8 > w)
                         return AVERROR_INVALIDDATA;
 
                     copy_block8(frame->data[plane] + (s->blocks_h - 1 - y) * 8 * frame->linesize[plane] + x * 8,
@@ -460,8 +463,8 @@ static int decode_inter_plane(AGMContext *s, GetBitContext *gb, int size,
                     return ret;
 
                 if (orig_mv_x >= -32) {
-                    if (y * 8 + mv_y < 0 || y * 8 + mv_y >= h ||
-                        x * 8 + mv_x < 0 || x * 8 + mv_x >= w)
+                    if (y * 8 + mv_y < 0 || y * 8 + mv_y + 8 > h ||
+                        x * 8 + mv_x < 0 || x * 8 + mv_x + 8 > w)
                         return AVERROR_INVALIDDATA;
 
                     copy_block8(frame->data[plane] + (s->blocks_h - 1 - y) * 8 * frame->linesize[plane] + x * 8,
@@ -573,13 +576,16 @@ static int decode_raw_intra_rgb(AVCodecContext *avctx, GetByteContext *gbyte, AV
     uint8_t *dst = frame->data[0] + (avctx->height - 1) * frame->linesize[0];
     uint8_t r = 0, g = 0, b = 0;
 
+    if (bytestream2_get_bytes_left(gbyte) < 3 * avctx->width * avctx->height)
+        return AVERROR_INVALIDDATA;
+
     for (int y = 0; y < avctx->height; y++) {
         for (int x = 0; x < avctx->width; x++) {
-            dst[x*3+0] = bytestream2_get_byte(gbyte) + r;
+            dst[x*3+0] = bytestream2_get_byteu(gbyte) + r;
             r = dst[x*3+0];
-            dst[x*3+1] = bytestream2_get_byte(gbyte) + g;
+            dst[x*3+1] = bytestream2_get_byteu(gbyte) + g;
             g = dst[x*3+1];
-            dst[x*3+2] = bytestream2_get_byte(gbyte) + b;
+            dst[x*3+2] = bytestream2_get_byteu(gbyte) + b;
             b = dst[x*3+2];
         }
         dst -= frame->linesize[0];
@@ -588,7 +594,7 @@ static int decode_raw_intra_rgb(AVCodecContext *avctx, GetByteContext *gbyte, AV
     return 0;
 }
 
-static int fill_pixels(uint8_t **y0, uint8_t **y1,
+av_always_inline static int fill_pixels(uint8_t **y0, uint8_t **y1,
                        uint8_t **u, uint8_t **v,
                        int ylinesize, int ulinesize, int vlinesize,
                        uint8_t *fill,
@@ -827,7 +833,7 @@ static int decode_intra(AVCodecContext *avctx, GetBitContext *gb, AVFrame *frame
 static int decode_motion_vectors(AVCodecContext *avctx, GetBitContext *gb)
 {
     AGMContext *s = avctx->priv_data;
-    int nb_mvs = ((avctx->height + 15) >> 4) * ((avctx->width + 15) >> 4);
+    int nb_mvs = ((avctx->coded_height + 15) >> 4) * ((avctx->coded_width + 15) >> 4);
     int ret, skip = 0, value, map;
 
     av_fast_padded_malloc(&s->mvectors, &s->mvectors_size,
@@ -1088,13 +1094,12 @@ static int decode_huffman2(AVCodecContext *avctx, int header, int size)
     return 0;
 }
 
-static int decode_frame(AVCodecContext *avctx, void *data,
+static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
                         int *got_frame, AVPacket *avpkt)
 {
     AGMContext *s = avctx->priv_data;
     GetBitContext *gb = &s->gb;
     GetByteContext *gbyte = &s->gbyte;
-    AVFrame *frame = data;
     int w, h, width, height, header;
     unsigned compressed_size;
     long skip;
@@ -1116,6 +1121,13 @@ static int decode_frame(AVCodecContext *avctx, void *data,
     s->key_frame = (avpkt->flags & AV_PKT_FLAG_KEY);
     frame->key_frame = s->key_frame;
     frame->pict_type = s->key_frame ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+
+    if (!s->key_frame) {
+        if (!s->prev_frame->data[0]) {
+            av_log(avctx, AV_LOG_ERROR, "Missing reference frame.\n");
+            return AVERROR_INVALIDDATA;
+        }
+    }
 
     if (header) {
         if (avctx->codec_tag == MKTAG('A', 'G', 'M', '0') ||
@@ -1186,10 +1198,6 @@ static int decode_frame(AVCodecContext *avctx, void *data,
         else
             ret = decode_intra(avctx, gb, frame);
     } else {
-        if (!s->prev_frame->data[0]) {
-            av_log(avctx, AV_LOG_ERROR, "Missing reference frame.\n");
-            return AVERROR_INVALIDDATA;
-        }
         if (s->prev_frame-> width != frame->width ||
             s->prev_frame->height != frame->height)
             return AVERROR_INVALIDDATA;
@@ -1236,6 +1244,11 @@ static av_cold int decode_init(AVCodecContext *avctx)
     s->dct = avctx->codec_tag != MKTAG('A', 'G', 'M', '4') &&
              avctx->codec_tag != MKTAG('A', 'G', 'M', '5');
 
+    if (!s->rgb && !s->dct) {
+        if ((avctx->width & 1) || (avctx->height & 1))
+            return AVERROR_INVALIDDATA;
+    }
+
     avctx->idct_algo = FF_IDCT_SIMPLE;
     ff_idctdsp_init(&s->idsp, avctx);
     ff_init_scantable(s->idsp.idct_permutation, &s->scantable, ff_zigzag_direct);
@@ -1272,17 +1285,17 @@ static av_cold int decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_agm_decoder = {
-    .name             = "agm",
-    .long_name        = NULL_IF_CONFIG_SMALL("Amuse Graphics Movie"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_AGM,
+const FFCodec ff_agm_decoder = {
+    .p.name           = "agm",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("Amuse Graphics Movie"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_AGM,
+    .p.capabilities   = AV_CODEC_CAP_DR1,
     .priv_data_size   = sizeof(AGMContext),
     .init             = decode_init,
     .close            = decode_close,
-    .decode           = decode_frame,
+    FF_CODEC_DECODE_CB(decode_frame),
     .flush            = decode_flush,
-    .capabilities     = AV_CODEC_CAP_DR1,
     .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE |
                         FF_CODEC_CAP_INIT_CLEANUP |
                         FF_CODEC_CAP_EXPORTS_CROPPING,

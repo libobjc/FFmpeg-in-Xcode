@@ -20,6 +20,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/channel_layout.h"
 #include "avformat.h"
 #include "internal.h"
 #include "avio_internal.h"
@@ -154,8 +155,7 @@ static int ifv_read_header(AVFormatContext *s)
 
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
-        st->codecpar->channels = 1;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+        st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
         st->codecpar->sample_rate = ifv->sample_rate;
         ifv->audio_stream_index = st->index;
 
@@ -187,29 +187,33 @@ static int ifv_read_header(AVFormatContext *s)
 static int ifv_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     IFVContext *ifv = s->priv_data;
-    AVStream *st;
     AVIndexEntry *ev, *ea, *e_next;
     int ret;
 
     ev = ea = e_next = NULL;
 
     if (ifv->next_video_index < ifv->total_vframes) {
-        st = s->streams[ifv->video_stream_index];
-        if (ifv->next_video_index < st->nb_index_entries)
-            e_next = ev = &st->index_entries[ifv->next_video_index];
+        AVStream *const st  = s->streams[ifv->video_stream_index];
+        FFStream *const sti = ffstream(st);
+
+        if (ifv->next_video_index < sti->nb_index_entries)
+            e_next = ev = &sti->index_entries[ifv->next_video_index];
     }
 
     if (ifv->is_audio_present &&
         ifv->next_audio_index < ifv->total_aframes) {
-        st = s->streams[ifv->audio_stream_index];
-        if (ifv->next_audio_index < st->nb_index_entries) {
-            ea = &st->index_entries[ifv->next_audio_index];
+        AVStream *const st  = s->streams[ifv->audio_stream_index];
+        FFStream *const sti = ffstream(st);
+
+        if (ifv->next_audio_index < sti->nb_index_entries) {
+            ea = &sti->index_entries[ifv->next_audio_index];
             if (!ev || ea->timestamp < ev->timestamp)
                 e_next = ea;
         }
     }
 
     if (!ev) {
+        uint64_t vframes, aframes;
         if (ifv->is_audio_present && !ea) {
             /*read new video and audio indexes*/
 
@@ -217,8 +221,12 @@ static int ifv_read_packet(AVFormatContext *s, AVPacket *pkt)
             ifv->next_audio_index = ifv->total_aframes;
 
             avio_skip(s->pb, 0x1c);
-            ifv->total_vframes += avio_rl32(s->pb);
-            ifv->total_aframes += avio_rl32(s->pb);
+            vframes = ifv->total_vframes + (uint64_t)avio_rl32(s->pb);
+            aframes = ifv->total_aframes + (uint64_t)avio_rl32(s->pb);
+            if (vframes > INT_MAX || aframes > INT_MAX)
+                return AVERROR_INVALIDDATA;
+            ifv->total_vframes = vframes;
+            ifv->total_aframes = aframes;
             avio_skip(s->pb, 0xc);
 
             if (avio_feof(s->pb))
@@ -240,7 +248,10 @@ static int ifv_read_packet(AVFormatContext *s, AVPacket *pkt)
             ifv->next_video_index = ifv->total_vframes;
 
             avio_skip(s->pb, 0x1c);
-            ifv->total_vframes += avio_rl32(s->pb);
+            vframes = ifv->total_vframes + (uint64_t)avio_rl32(s->pb);
+            if (vframes > INT_MAX)
+                return AVERROR_INVALIDDATA;
+            ifv->total_vframes = vframes;
             avio_skip(s->pb, 0x10);
 
             if (avio_feof(s->pb))
@@ -297,7 +308,7 @@ static int ifv_read_seek(AVFormatContext *s, int stream_index, int64_t ts, int f
     return 0;
 }
 
-AVInputFormat ff_ifv_demuxer = {
+const AVInputFormat ff_ifv_demuxer = {
     .name           = "ifv",
     .long_name      = NULL_IF_CONFIG_SMALL("IFV CCTV DVR"),
     .priv_data_size = sizeof(IFVContext),

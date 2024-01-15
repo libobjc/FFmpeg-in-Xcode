@@ -23,6 +23,7 @@
 #ifndef AVFILTER_FSPP_H
 #define AVFILTER_FSPP_H
 
+#include "libavutil/video_enc_params.h"
 #include "avfilter.h"
 
 #define BLOCKSZ 12
@@ -61,12 +62,12 @@ typedef struct FSPPContext {
     int vsub;
     int temp_stride;
     int qp;
-    int qscale_type;
+    enum AVVideoEncParamsType qscale_type;
     int prev_q;
     uint8_t *src;
     int16_t *temp;
-    uint8_t *non_b_qp_table;
-    int non_b_qp_alloc_size;
+    int8_t  *non_b_qp_table;
+    int non_b_qp_stride;
     int use_bframe_qp;
 
     void (*store_slice)(uint8_t *dst, int16_t *src,

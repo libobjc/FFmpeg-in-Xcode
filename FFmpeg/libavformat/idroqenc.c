@@ -55,12 +55,11 @@ static int roq_write_header(struct AVFormatContext *s)
     }
 
     avio_write(s->pb, header, 8);
-    avio_flush(s->pb);
 
     return 0;
 }
 
-AVOutputFormat ff_roq_muxer = {
+const AVOutputFormat ff_roq_muxer = {
     .name         = "roq",
     .long_name    = NULL_IF_CONFIG_SMALL("raw id RoQ"),
     .extensions   = "roq",

@@ -25,21 +25,34 @@
  * JPEG-LS encoder.
  */
 
+#define UNCHECKED_BITSTREAM_READER 1
+#include "libavutil/opt.h"
 #include "avcodec.h"
+#include "bytestream.h"
+#include "codec_internal.h"
+#include "encode.h"
 #include "get_bits.h"
 #include "put_bits.h"
-#include "golomb.h"
-#include "internal.h"
+#include "put_golomb.h"
 #include "mathops.h"
 #include "mjpeg.h"
-#include "mjpegenc.h"
 #include "jpegls.h"
 
 typedef struct JPEGLSContext {
     AVClass *class;
 
     int pred;
+    int comps;
+
+    size_t size;
+    uint8_t *buf;
 } JPEGLSContext;
+
+static inline void put_marker_byteu(PutByteContext *pb, enum JpegMarker code)
+{
+    bytestream2_put_byteu(pb, 0xff);
+    bytestream2_put_byteu(pb, code);
+}
 
 /**
  * Encode error from regular symbol
@@ -128,21 +141,19 @@ static inline void ls_encode_run(JLSState *state, PutBitContext *pb, int run,
  * Encode one line of image
  */
 static inline void ls_encode_line(JLSState *state, PutBitContext *pb,
-                                  void *last, void *cur, int last2, int w,
+                                  void *tmp, const void *in, int last2, int w,
                                   int stride, int comp, int bits)
 {
     int x = 0;
-    int Ra, Rb, Rc, Rd;
+    int Ra = R(tmp, 0), Rb, Rc = last2, Rd;
     int D0, D1, D2;
 
     while (x < w) {
         int err, pred, sign;
 
         /* compute gradients */
-        Ra = x ? R(cur, x - stride) : R(last, x);
-        Rb = R(last, x);
-        Rc = x ? R(last, x - stride) : last2;
-        Rd = (x >= w - stride) ? R(last, x) : R(last, x + stride);
+        Rb = R(tmp, x);
+        Rd = (x >= w - stride) ? R(tmp, x) : R(tmp, x + stride);
         D0 = Rd - Rb;
         D1 = Rb - Rc;
         D2 = Rc - Ra;
@@ -155,18 +166,18 @@ static inline void ls_encode_line(JLSState *state, PutBitContext *pb,
 
             run    = 0;
             RUNval = Ra;
-            while (x < w && (FFABS(R(cur, x) - RUNval) <= state->near)) {
+            while (x < w && (FFABS(R(in, x) - RUNval) <= state->near)) {
                 run++;
-                W(cur, x, Ra);
+                W(tmp, x, Ra);
                 x += stride;
             }
             ls_encode_run(state, pb, run, comp, x < w);
             if (x >= w)
                 return;
-            Rb     = R(last, x);
+            Rb     = R(tmp, x);
             RItype = FFABS(Ra - Rb) <= state->near;
             pred   = RItype ? Ra : Rb;
-            err    = R(cur, x) - pred;
+            err    = R(in, x) - pred;
 
             if (!RItype && Ra > Rb)
                 err = -err;
@@ -181,8 +192,10 @@ static inline void ls_encode_line(JLSState *state, PutBitContext *pb,
                     Ra = av_clip(pred + err * state->twonear, 0, state->maxval);
                 else
                     Ra = av_clip(pred - err * state->twonear, 0, state->maxval);
-                W(cur, x, Ra);
-            }
+            } else
+                Ra = R(in, x);
+            W(tmp, x, Ra);
+
             if (err < 0)
                 err += state->range;
             if (err >= state->range + 1 >> 1)
@@ -205,11 +218,11 @@ static inline void ls_encode_line(JLSState *state, PutBitContext *pb,
                 context = -context;
                 sign    = 1;
                 pred    = av_clip(pred - state->C[context], 0, state->maxval);
-                err     = pred - R(cur, x);
+                err     = pred - R(in, x);
             } else {
                 sign = 0;
                 pred = av_clip(pred + state->C[context], 0, state->maxval);
-                err  = R(cur, x) - pred;
+                err  = R(in, x) - pred;
             }
 
             if (state->near) {
@@ -221,16 +234,18 @@ static inline void ls_encode_line(JLSState *state, PutBitContext *pb,
                     Ra = av_clip(pred + err * state->twonear, 0, state->maxval);
                 else
                     Ra = av_clip(pred - err * state->twonear, 0, state->maxval);
-                W(cur, x, Ra);
-            }
+            } else
+                Ra = R(in, x);
+            W(tmp, x, Ra);
 
             ls_encode_regular(state, pb, context, err);
         }
+        Rc = Rb;
         x += stride;
     }
 }
 
-static void ls_store_lse(JLSState *state, PutBitContext *pb)
+static void ls_store_lse(JLSState *state, PutByteContext *pb)
 {
     /* Test if we have default params and don't need to store LSE */
     JLSState state2 = { 0 };
@@ -243,14 +258,14 @@ static void ls_store_lse(JLSState *state, PutBitContext *pb)
         state->reset == state2.reset)
         return;
     /* store LSE type 1 */
-    put_marker(pb, LSE);
-    put_bits(pb, 16, 13);
-    put_bits(pb, 8, 1);
-    put_bits(pb, 16, state->maxval);
-    put_bits(pb, 16, state->T1);
-    put_bits(pb, 16, state->T2);
-    put_bits(pb, 16, state->T3);
-    put_bits(pb, 16, state->reset);
+    put_marker_byteu(pb, LSE);
+    bytestream2_put_be16u(pb, 13);
+    bytestream2_put_byteu(pb, 1);
+    bytestream2_put_be16u(pb, state->maxval);
+    bytestream2_put_be16u(pb, state->T1);
+    bytestream2_put_be16u(pb, state->T2);
+    bytestream2_put_be16u(pb, state->T3);
+    bytestream2_put_be16u(pb, state->reset);
 }
 
 static int encode_picture_ls(AVCodecContext *avctx, AVPacket *pkt,
@@ -258,99 +273,47 @@ static int encode_picture_ls(AVCodecContext *avctx, AVPacket *pkt,
 {
     JPEGLSContext *ctx = avctx->priv_data;
     const AVFrame *const p = pict;
-    PutBitContext pb, pb2;
+    PutByteContext pb;
+    PutBitContext pb2;
     GetBitContext gb;
-    uint8_t *buf2 = NULL;
-    uint8_t *zero = NULL;
-    uint8_t *cur  = NULL;
+    const uint8_t *in;
     uint8_t *last = NULL;
-    JLSState *state = NULL;
-    int i, size, ret;
+    JLSState state = { 0 };
+    size_t size;
+    int i, ret, size_in_bits;
     int comps;
 
-#if FF_API_PRIVATE_OPT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->prediction_method)
-        ctx->pred = avctx->prediction_method;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
+    last = av_mallocz(FFABS(p->linesize[0]));
+    if (!last)
+        return AVERROR(ENOMEM);
 
-    if (avctx->pix_fmt == AV_PIX_FMT_GRAY8 ||
-        avctx->pix_fmt == AV_PIX_FMT_GRAY16)
-        comps = 1;
-    else
-        comps = 3;
+    init_put_bits(&pb2, ctx->buf, ctx->size);
 
-    if ((ret = ff_alloc_packet2(avctx, pkt, avctx->width  *avctx->height * comps * 4 +
-                                AV_INPUT_BUFFER_MIN_SIZE, 0)) < 0)
-        return ret;
-
-    buf2 = av_malloc(pkt->size);
-    if (!buf2)
-        goto memfail;
-
-    init_put_bits(&pb, pkt->data, pkt->size);
-    init_put_bits(&pb2, buf2, pkt->size);
-
-    /* write our own JPEG header, can't use mjpeg_picture_header */
-    put_marker(&pb, SOI);
-    put_marker(&pb, SOF48);
-    put_bits(&pb, 16, 8 + comps * 3); // header size depends on components
-    put_bits(&pb, 8, (avctx->pix_fmt == AV_PIX_FMT_GRAY16) ? 16 : 8);  // bpp
-    put_bits(&pb, 16, avctx->height);
-    put_bits(&pb, 16, avctx->width);
-    put_bits(&pb, 8, comps);          // components
-    for (i = 1; i <= comps; i++) {
-        put_bits(&pb, 8, i);     // component ID
-        put_bits(&pb, 8, 0x11);  // subsampling: none
-        put_bits(&pb, 8, 0);     // Tiq, used by JPEG-LS ext
-    }
-
-    put_marker(&pb, SOS);
-    put_bits(&pb, 16, 6 + comps * 2);
-    put_bits(&pb, 8, comps);
-    for (i = 1; i <= comps; i++) {
-        put_bits(&pb, 8, i);   // component ID
-        put_bits(&pb, 8, 0);   // mapping index: none
-    }
-    put_bits(&pb, 8, ctx->pred);
-    put_bits(&pb, 8, (comps > 1) ? 1 : 0);  // interleaving: 0 - plane, 1 - line
-    put_bits(&pb, 8, 0);  // point transform: none
-
-    state = av_mallocz(sizeof(JLSState));
-    if (!state)
-        goto memfail;
-
+    comps = ctx->comps;
     /* initialize JPEG-LS state from JPEG parameters */
-    state->near = ctx->pred;
-    state->bpp  = (avctx->pix_fmt == AV_PIX_FMT_GRAY16) ? 16 : 8;
-    ff_jpegls_reset_coding_parameters(state, 0);
-    ff_jpegls_init_state(state);
+    state.near = ctx->pred;
+    state.bpp  = (avctx->pix_fmt == AV_PIX_FMT_GRAY16) ? 16 : 8;
+    ff_jpegls_reset_coding_parameters(&state, 0);
+    ff_jpegls_init_state(&state);
 
-    ls_store_lse(state, &pb);
-
-    zero = last = av_mallocz(FFABS(p->linesize[0]));
-    if (!zero)
-        goto memfail;
-
-    cur  = p->data[0];
+    in = p->data[0];
     if (avctx->pix_fmt == AV_PIX_FMT_GRAY8) {
         int t = 0;
 
         for (i = 0; i < avctx->height; i++) {
-            ls_encode_line(state, &pb2, last, cur, t, avctx->width, 1, 0, 8);
-            t    = last[0];
-            last = cur;
-            cur += p->linesize[0];
+            int last0 = last[0];
+            ls_encode_line(&state, &pb2, last, in, t, avctx->width, 1, 0, 8);
+            t   = last0;
+            in += p->linesize[0];
         }
     } else if (avctx->pix_fmt == AV_PIX_FMT_GRAY16) {
         int t = 0;
 
         for (i = 0; i < avctx->height; i++) {
-            ls_encode_line(state, &pb2, last, cur, t, avctx->width, 1, 0, 16);
-            t    = *((uint16_t *)last);
-            last = cur;
-            cur += p->linesize[0];
+            int last0 = *((uint16_t *)last);
+            ls_encode_line(&state, &pb2, last, in, t, avctx->width, 1, 0, 16);
+            t   = last0;
+            in += p->linesize[0];
         }
     } else if (avctx->pix_fmt == AV_PIX_FMT_RGB24) {
         int j, width;
@@ -359,12 +322,12 @@ FF_ENABLE_DEPRECATION_WARNINGS
         width = avctx->width * 3;
         for (i = 0; i < avctx->height; i++) {
             for (j = 0; j < 3; j++) {
-                ls_encode_line(state, &pb2, last + j, cur + j, Rc[j],
+                int last0 = last[j];
+                ls_encode_line(&state, &pb2, last + j, in + j, Rc[j],
                                width, 3, j, 8);
-                Rc[j] = last[j];
+                Rc[j] = last0;
             }
-            last = cur;
-            cur += p->linesize[0];
+            in += p->linesize[0];
         }
     } else if (avctx->pix_fmt == AV_PIX_FMT_BGR24) {
         int j, width;
@@ -373,75 +336,122 @@ FF_ENABLE_DEPRECATION_WARNINGS
         width = avctx->width * 3;
         for (i = 0; i < avctx->height; i++) {
             for (j = 2; j >= 0; j--) {
-                ls_encode_line(state, &pb2, last + j, cur + j, Rc[j],
+                int last0 = last[j];
+                ls_encode_line(&state, &pb2, last + j, in + j, Rc[j],
                                width, 3, j, 8);
-                Rc[j] = last[j];
+                Rc[j] = last0;
             }
-            last = cur;
-            cur += p->linesize[0];
+            in += p->linesize[0];
         }
     }
-
-    av_freep(&zero);
-    av_freep(&state);
-
-    /* the specification says that after doing 0xff escaping unused bits in
-     * the last byte must be set to 0, so just append 7 "optional" zero bits
-     * to avoid special-casing. */
+    av_free(last);
+    /* Now the actual image data has been written, which enables us to estimate
+     * the needed packet size: For every 15 input bits, an escape bit might be
+     * added below; and if put_bits_count % 15 is >= 8, then another bit might
+     * be added.
+     * Furthermore the specification says that after doing 0xff escaping unused
+     * bits in the last byte must be set to 0, so just append 7 "optional" zero
+     * bits to avoid special-casing. This also simplifies the size calculation:
+     * Properly rounding up is now automatically baked-in. */
     put_bits(&pb2, 7, 0);
-    size = put_bits_count(&pb2);
+    /* Make sure that the bit count + padding is representable in an int;
+       necessary for put_bits_count() as well as for using a GetBitContext. */
+    if (put_bytes_count(&pb2, 0) > INT_MAX / 8 - AV_INPUT_BUFFER_PADDING_SIZE)
+        return AVERROR(ERANGE);
+    size_in_bits = put_bits_count(&pb2);
     flush_put_bits(&pb2);
+    size  = size_in_bits * 2U / 15;
+    size += 2 + 2 + 2 + 1 + 2 + 2 + 1 + comps * (1 + 1 + 1) + 2 + 2 + 1
+            + comps * (1 + 1) + 1 + 1 + 1; /* Header */
+    size += 2 + 2 + 1 + 2 + 2 + 2 + 2 + 2; /* LSE */
+    size += 2; /* EOI */
+    if ((ret = ff_get_encode_buffer(avctx, pkt, size, 0)) < 0)
+        return ret;
+
+    bytestream2_init_writer(&pb, pkt->data, pkt->size);
+
+    /* write our own JPEG header, can't use mjpeg_picture_header */
+    put_marker_byteu(&pb, SOI);
+    put_marker_byteu(&pb, SOF48);
+    bytestream2_put_be16u(&pb, 8 + comps * 3); // header size depends on components
+    bytestream2_put_byteu(&pb, (avctx->pix_fmt == AV_PIX_FMT_GRAY16) ? 16 : 8);  // bpp
+    bytestream2_put_be16u(&pb, avctx->height);
+    bytestream2_put_be16u(&pb, avctx->width);
+    bytestream2_put_byteu(&pb, comps);          // components
+    for (i = 1; i <= comps; i++) {
+        bytestream2_put_byteu(&pb, i);     // component ID
+        bytestream2_put_byteu(&pb, 0x11);  // subsampling: none
+        bytestream2_put_byteu(&pb, 0);     // Tiq, used by JPEG-LS ext
+    }
+
+    put_marker_byteu(&pb, SOS);
+    bytestream2_put_be16u(&pb, 6 + comps * 2);
+    bytestream2_put_byteu(&pb, comps);
+    for (i = 1; i <= comps; i++) {
+        bytestream2_put_byteu(&pb, i);   // component ID
+        bytestream2_put_byteu(&pb, 0);   // mapping index: none
+    }
+    bytestream2_put_byteu(&pb, ctx->pred);
+    bytestream2_put_byteu(&pb, (comps > 1) ? 1 : 0);  // interleaving: 0 - plane, 1 - line
+    bytestream2_put_byteu(&pb, 0);  // point transform: none
+
+    ls_store_lse(&state, &pb);
+
     /* do escape coding */
-    init_get_bits(&gb, buf2, size);
-    size -= 7;
-    while (get_bits_count(&gb) < size) {
+    init_get_bits(&gb, pb2.buf, size_in_bits);
+    size_in_bits -= 7;
+    while (get_bits_count(&gb) < size_in_bits) {
         int v;
         v = get_bits(&gb, 8);
-        put_bits(&pb, 8, v);
+        bytestream2_put_byteu(&pb, v);
         if (v == 0xFF) {
             v = get_bits(&gb, 7);
-            put_bits(&pb, 8, v);
+            bytestream2_put_byteu(&pb, v);
         }
     }
-    avpriv_align_put_bits(&pb);
-    av_freep(&buf2);
 
     /* End of image */
-    put_marker(&pb, EOI);
-    flush_put_bits(&pb);
+    put_marker_byteu(&pb, EOI);
 
     emms_c();
 
-    pkt->size   = put_bits_count(&pb) >> 3;
-    pkt->flags |= AV_PKT_FLAG_KEY;
+    av_shrink_packet(pkt, bytestream2_tell_p(&pb));
     *got_packet = 1;
     return 0;
-
-memfail:
-    av_packet_unref(pkt);
-    av_freep(&buf2);
-    av_freep(&state);
-    av_freep(&zero);
-    return AVERROR(ENOMEM);
 }
 
-static av_cold int encode_init_ls(AVCodecContext *ctx)
+static av_cold int encode_jpegls_init(AVCodecContext *avctx)
 {
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    ctx->coded_frame->pict_type = AV_PICTURE_TYPE_I;
-    ctx->coded_frame->key_frame = 1;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
+    JPEGLSContext *ctx = avctx->priv_data;
+    size_t size;
 
-    if (ctx->pix_fmt != AV_PIX_FMT_GRAY8  &&
-        ctx->pix_fmt != AV_PIX_FMT_GRAY16 &&
-        ctx->pix_fmt != AV_PIX_FMT_RGB24  &&
-        ctx->pix_fmt != AV_PIX_FMT_BGR24) {
-        av_log(ctx, AV_LOG_ERROR,
-               "Only grayscale and RGB24/BGR24 images are supported\n");
-        return -1;
+    if ((avctx->width | avctx->height) > UINT16_MAX) {
+        av_log(avctx, AV_LOG_ERROR, "Dimensions exceeding 65535x65535\n");
+        return AVERROR(EINVAL);
     }
+    if (avctx->pix_fmt == AV_PIX_FMT_GRAY8 ||
+        avctx->pix_fmt == AV_PIX_FMT_GRAY16)
+        ctx->comps = 1;
+    else
+        ctx->comps = 3;
+    size = AV_INPUT_BUFFER_MIN_SIZE;
+    /* INT_MAX due to PutBit-API. */
+    if (avctx->width * (unsigned)avctx->height > (INT_MAX - size) / 4 / ctx->comps)
+        return AVERROR(ERANGE);
+    size += 4 * ctx->comps * avctx->width * avctx->height;
+    ctx->size = size;
+    ctx->buf = av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!ctx->buf)
+        return AVERROR(ENOMEM);
+
+    return 0;
+}
+
+static av_cold int encode_jpegls_close(AVCodecContext *avctx)
+{
+    JPEGLSContext *ctx = avctx->priv_data;
+
+    av_freep(&ctx->buf);
     return 0;
 }
 
@@ -463,17 +473,18 @@ static const AVClass jpegls_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_jpegls_encoder = {
-    .name           = "jpegls",
-    .long_name      = NULL_IF_CONFIG_SMALL("JPEG-LS"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_JPEGLS,
+const FFCodec ff_jpegls_encoder = {
+    .p.name         = "jpegls",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("JPEG-LS"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_JPEGLS,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .priv_data_size = sizeof(JPEGLSContext),
-    .priv_class     = &jpegls_class,
-    .init           = encode_init_ls,
-    .capabilities   = AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_INTRA_ONLY,
-    .encode2        = encode_picture_ls,
-    .pix_fmts       = (const enum AVPixelFormat[]) {
+    .p.priv_class   = &jpegls_class,
+    .init           = encode_jpegls_init,
+    FF_CODEC_ENCODE_CB(encode_picture_ls),
+    .close          = encode_jpegls_close,
+    .p.pix_fmts     = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_BGR24, AV_PIX_FMT_RGB24,
         AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY16,
         AV_PIX_FMT_NONE

@@ -74,7 +74,6 @@ extern const ff_asf_guid ff_asf_file_header;
 extern const ff_asf_guid ff_asf_stream_header;
 extern const ff_asf_guid ff_asf_ext_stream_header;
 extern const ff_asf_guid ff_asf_audio_stream;
-extern const ff_asf_guid ff_asf_audio_conceal_none;
 extern const ff_asf_guid ff_asf_audio_conceal_spread;
 extern const ff_asf_guid ff_asf_video_stream;
 extern const ff_asf_guid ff_asf_jfif_media;
@@ -104,6 +103,16 @@ extern const ff_asf_guid ff_asf_group_mutual_exclusion_object;
 extern const ff_asf_guid ff_asf_mutex_language;
 
 extern const AVMetadataConv ff_asf_metadata_conv[];
+
+/**
+ * Handles both attached pictures as well as id3 tags.
+ *
+ * @return Returns < 0 on error, 1 if the type of the byte array
+ *         is unsupported by this function and 0 otherwise.
+ */
+int ff_asf_handle_byte_array(AVFormatContext *s, const char *name,
+                             int val_len);
+
 
 #define ASF_PACKET_FLAG_ERROR_CORRECTION_PRESENT 0x80 //1000 0000
 

@@ -74,7 +74,8 @@ static int aqt_read_header(AVFormatContext *s)
             new_event = 1;
             pos = avio_tell(s->pb);
             if (sub) {
-                sub->duration = frame - sub->pts;
+                if (frame >= sub->pts && (uint64_t)frame - sub->pts < INT64_MAX)
+                    sub->duration = frame - sub->pts;
                 sub = NULL;
             }
         } else if (*line) {
@@ -134,10 +135,11 @@ static const AVClass aqt_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVInputFormat ff_aqtitle_demuxer = {
+const AVInputFormat ff_aqtitle_demuxer = {
     .name           = "aqtitle",
     .long_name      = NULL_IF_CONFIG_SMALL("AQTitle subtitles"),
     .priv_data_size = sizeof(AQTitleContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = aqt_probe,
     .read_header    = aqt_read_header,
     .read_packet    = aqt_read_packet,

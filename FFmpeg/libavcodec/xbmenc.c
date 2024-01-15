@@ -20,19 +20,32 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/reverse.h"
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "encode.h"
 #include "mathops.h"
+
+#define ANSI_MIN_READLINE 509
 
 static int xbm_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                             const AVFrame *p, int *got_packet)
 {
-    int i, j, ret, size, linesize;
+    int i, j, l, commas, ret, size, linesize, lineout, rowsout;
     uint8_t *ptr, *buf;
 
-    linesize = (avctx->width + 7) / 8;
-    size     = avctx->height * (linesize * 7 + 2) + 110;
-    if ((ret = ff_alloc_packet2(avctx, pkt, size, 0)) < 0)
+    linesize = lineout = (avctx->width + 7) / 8;
+    commas   = avctx->height * linesize;
+
+    /* ANSI worst case minimum readline is 509 chars. */
+    rowsout  = avctx->height;
+    if (lineout > (ANSI_MIN_READLINE / 6)) {
+        lineout = ANSI_MIN_READLINE / 6;
+        rowsout = (commas + lineout - 1) / lineout;
+    }
+
+    size     = rowsout * (lineout * 6 + 1) + 106;
+    if ((ret = ff_alloc_packet(avctx, pkt, size)) < 0)
         return ret;
 
     buf = pkt->data;
@@ -40,27 +53,35 @@ static int xbm_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
     buf += snprintf(buf, 32, "#define image_width %u\n", avctx->width);
     buf += snprintf(buf, 33, "#define image_height %u\n", avctx->height);
-    buf += snprintf(buf, 40, "static unsigned char image_bits[] = {\n");
-    for (i = 0; i < avctx->height; i++) {
-        for (j = 0; j < linesize; j++)
-            buf += snprintf(buf, 7, " 0x%02X,", ff_reverse[*ptr++]);
+    buf += snprintf(buf, 39, "static unsigned char image_bits[] = {\n");
+    for (i = 0, l = lineout; i < avctx->height; i++) {
+        for (j = 0; j < linesize; j++) {
+            buf += snprintf(buf, 6, " 0x%02X", ff_reverse[*ptr++]);
+            if (--commas <= 0) {
+                buf += snprintf(buf, 2, "\n");
+                break;
+            }
+            buf += snprintf(buf, 2, ",");
+            if (--l <= 0) {
+                buf += snprintf(buf, 2, "\n");
+                l = lineout;
+            }
+        }
         ptr += p->linesize[0] - linesize;
-        buf += snprintf(buf, 2, "\n");
     }
     buf += snprintf(buf, 5, " };\n");
 
     pkt->size   = buf - pkt->data;
-    pkt->flags |= AV_PKT_FLAG_KEY;
     *got_packet = 1;
     return 0;
 }
 
-AVCodec ff_xbm_encoder = {
-    .name         = "xbm",
-    .long_name    = NULL_IF_CONFIG_SMALL("XBM (X BitMap) image"),
-    .type         = AVMEDIA_TYPE_VIDEO,
-    .id           = AV_CODEC_ID_XBM,
-    .encode2      = xbm_encode_frame,
-    .pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_MONOWHITE,
+const FFCodec ff_xbm_encoder = {
+    .p.name       = "xbm",
+    .p.long_name  = NULL_IF_CONFIG_SMALL("XBM (X BitMap) image"),
+    .p.type       = AVMEDIA_TYPE_VIDEO,
+    .p.id         = AV_CODEC_ID_XBM,
+    FF_CODEC_ENCODE_CB(xbm_encode_frame),
+    .p.pix_fmts   = (const enum AVPixelFormat[]) { AV_PIX_FMT_MONOWHITE,
                                                    AV_PIX_FMT_NONE },
 };

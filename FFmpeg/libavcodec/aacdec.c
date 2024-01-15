@@ -33,13 +33,12 @@
  */
 
 #define FFT_FLOAT 1
-#define FFT_FIXED_32 0
 #define USE_FIXED 0
 
 #include "libavutil/float_dsp.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "fft.h"
 #include "mdct15.h"
@@ -68,6 +67,11 @@
 #elif ARCH_MIPS
 #   include "mips/aacdec_mips.h"
 #endif
+
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(sine_120))[120];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(sine_960))[960];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(aac_kbd_long_960))[960];
+DECLARE_ALIGNED(32, static INTFLOAT, AAC_RENAME(aac_kbd_short_120))[120];
 
 static av_always_inline void reset_predict_state(PredictorState *ps)
 {
@@ -409,6 +413,8 @@ static int read_stream_mux_config(struct LATMContext *latmctx,
             } else {
                 int esc;
                 do {
+                    if (get_bits_left(gb) < 9)
+                        return AVERROR_INVALIDDATA;
                     esc = get_bits(gb, 1);
                     skip_bits(gb, 8);
                 } while (esc);
@@ -474,7 +480,7 @@ static int read_audio_mux_element(struct LATMContext *latmctx,
 }
 
 
-static int latm_decode_frame(AVCodecContext *avctx, void *out,
+static int latm_decode_frame(AVCodecContext *avctx, AVFrame *out,
                              int *got_frame_ptr, AVPacket *avpkt)
 {
     struct LATMContext *latmctx = avctx->priv_data;
@@ -546,24 +552,27 @@ static av_cold int latm_decode_init(AVCodecContext *avctx)
     return ret;
 }
 
-AVCodec ff_aac_decoder = {
-    .name            = "aac",
-    .long_name       = NULL_IF_CONFIG_SMALL("AAC (Advanced Audio Coding)"),
-    .type            = AVMEDIA_TYPE_AUDIO,
-    .id              = AV_CODEC_ID_AAC,
+const FFCodec ff_aac_decoder = {
+    .p.name          = "aac",
+    .p.long_name     = NULL_IF_CONFIG_SMALL("AAC (Advanced Audio Coding)"),
+    .p.type          = AVMEDIA_TYPE_AUDIO,
+    .p.id            = AV_CODEC_ID_AAC,
     .priv_data_size  = sizeof(AACContext),
     .init            = aac_decode_init,
     .close           = aac_decode_close,
-    .decode          = aac_decode_frame,
-    .sample_fmts     = (const enum AVSampleFormat[]) {
+    FF_CODEC_DECODE_CB(aac_decode_frame),
+    .p.sample_fmts   = (const enum AVSampleFormat[]) {
         AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_NONE
     },
-    .capabilities    = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
-    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE,
-    .channel_layouts = aac_channel_layout,
+    .p.capabilities  = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
+    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+#if FF_API_OLD_CHANNEL_LAYOUT
+    .p.channel_layouts = aac_channel_layout,
+#endif
+    .p.ch_layouts    = aac_ch_layout,
     .flush = flush,
-    .priv_class      = &aac_decoder_class,
-    .profiles        = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
+    .p.priv_class    = &aac_decoder_class,
+    .p.profiles      = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
 };
 
 /*
@@ -571,21 +580,24 @@ AVCodec ff_aac_decoder = {
     in MPEG transport streams which only contain one program.
     To do a more complex LATM demuxing a separate LATM demuxer should be used.
 */
-AVCodec ff_aac_latm_decoder = {
-    .name            = "aac_latm",
-    .long_name       = NULL_IF_CONFIG_SMALL("AAC LATM (Advanced Audio Coding LATM syntax)"),
-    .type            = AVMEDIA_TYPE_AUDIO,
-    .id              = AV_CODEC_ID_AAC_LATM,
+const FFCodec ff_aac_latm_decoder = {
+    .p.name          = "aac_latm",
+    .p.long_name     = NULL_IF_CONFIG_SMALL("AAC LATM (Advanced Audio Coding LATM syntax)"),
+    .p.type          = AVMEDIA_TYPE_AUDIO,
+    .p.id            = AV_CODEC_ID_AAC_LATM,
     .priv_data_size  = sizeof(struct LATMContext),
     .init            = latm_decode_init,
     .close           = aac_decode_close,
-    .decode          = latm_decode_frame,
-    .sample_fmts     = (const enum AVSampleFormat[]) {
+    FF_CODEC_DECODE_CB(latm_decode_frame),
+    .p.sample_fmts   = (const enum AVSampleFormat[]) {
         AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_NONE
     },
-    .capabilities    = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
-    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE,
-    .channel_layouts = aac_channel_layout,
+    .p.capabilities  = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
+    .caps_internal   = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+#if FF_API_OLD_CHANNEL_LAYOUT
+    .p.channel_layouts = aac_channel_layout,
+#endif
+    .p.ch_layouts    = aac_ch_layout,
     .flush = flush,
-    .profiles        = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
+    .p.profiles      = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
 };

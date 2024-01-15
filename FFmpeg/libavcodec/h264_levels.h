@@ -23,7 +23,7 @@
 #include <stdint.h>
 
 typedef struct H264LevelDescriptor {
-    const char *name;
+    char        name[4];    // Large enough for all current levels like "4.1"
     uint8_t     level_idc;
     uint8_t     constraint_set3_flag;
     uint32_t    max_mbps;
@@ -35,9 +35,6 @@ typedef struct H264LevelDescriptor {
     uint8_t     min_cr;
     uint8_t     max_mvs_per_2mb;
 } H264LevelDescriptor;
-
-const H264LevelDescriptor *ff_h264_get_level(int level_idc,
-                                             int constraint_set3_flag);
 
 /**
  * Guess the level of a stream from some parameters.

@@ -25,8 +25,8 @@
 
 #include "avcodec.h"
 #include "canopus.h"
+#include "codec_internal.h"
 #include "get_bits.h"
-#include "internal.h"
 #include "thread.h"
 
 #include "hqx.h"
@@ -122,8 +122,6 @@ static int decode_block(GetBitContext *gb, VLC *vlc,
 
     memset(block, 0, 64 * sizeof(*block));
     dc = get_vlc2(gb, vlc->table, HQX_DC_VLC_BITS, 2);
-    if (dc < 0)
-        return AVERROR_INVALIDDATA;
     *last_dc += dc;
 
     block[0] = sign_extend(*last_dc << (12 - dcb), 12);
@@ -197,7 +195,7 @@ static int hqx_decode_422a(HQXContext *ctx, int slice_no, int x, int y)
     int i, ret;
     int cbp;
 
-    cbp = get_vlc2(gb, ctx->cbp_vlc.table, ctx->cbp_vlc.bits, 1);
+    cbp = get_vlc2(gb, ctx->cbp_vlc.table, HQX_CBP_VLC_BITS, 1);
 
     for (i = 0; i < 12; i++)
         memset(slice->block[i], 0, sizeof(**slice->block) * 64);
@@ -283,7 +281,7 @@ static int hqx_decode_444a(HQXContext *ctx, int slice_no, int x, int y)
     int i, ret;
     int cbp;
 
-    cbp = get_vlc2(gb, ctx->cbp_vlc.table, ctx->cbp_vlc.bits, 1);
+    cbp = get_vlc2(gb, ctx->cbp_vlc.table, HQX_CBP_VLC_BITS, 1);
 
     for (i = 0; i < 16; i++)
         memset(slice->block[i], 0, sizeof(**slice->block) * 64);
@@ -402,12 +400,11 @@ static int decode_slice_thread(AVCodecContext *avctx, void *arg,
     return decode_slice(ctx, slice_no);
 }
 
-static int hqx_decode_frame(AVCodecContext *avctx, void *data,
+static int hqx_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                             int *got_picture_ptr, AVPacket *avpkt)
 {
     HQXContext *ctx = avctx->priv_data;
-    ThreadFrame frame = { .f = data };
-    uint8_t *src = avpkt->data;
+    const uint8_t *src = avpkt->data;
     uint32_t info_tag;
     int data_start;
     int i, ret;
@@ -435,7 +432,7 @@ static int hqx_decode_frame(AVCodecContext *avctx, void *data,
     data_start     = src - avpkt->data;
     ctx->data_size = avpkt->size - data_start;
     ctx->src       = src;
-    ctx->pic       = data;
+    ctx->pic       = frame;
 
     if (ctx->data_size < HQX_HEADER_SIZE) {
         av_log(avctx, AV_LOG_ERROR, "Frame too small.\n");
@@ -471,6 +468,14 @@ static int hqx_decode_frame(AVCodecContext *avctx, void *data,
     avctx->height              = ctx->height;
     avctx->bits_per_raw_sample = 10;
 
+    //The minimum size is 2bit per macroblock
+    // hqx_decode_422 & hqx_decode_444 have a unconditionally stored 4bits hqx_quants index
+    // hqx_decode_422a & hqx_decode_444a use cbp_vlc which has a minimum length of 2 bits for its VLCs
+    // The code rejects slices overlapping in their input data
+    if (avctx->coded_width / 16 * (avctx->coded_height / 16) *
+        (100 - avctx->discard_damaged_percentage) / 100 > 4LL * avpkt->size)
+        return AVERROR_INVALIDDATA;
+
     switch (ctx->format) {
     case HQX_422:
         avctx->pix_fmt = AV_PIX_FMT_YUV422P16;
@@ -493,7 +498,7 @@ static int hqx_decode_frame(AVCodecContext *avctx, void *data,
         return AVERROR_INVALIDDATA;
     }
 
-    ret = ff_thread_get_buffer(avctx, &frame, 0);
+    ret = ff_thread_get_buffer(avctx, frame, 0);
     if (ret < 0)
         return ret;
 
@@ -512,9 +517,6 @@ static av_cold int hqx_decode_close(AVCodecContext *avctx)
     int i;
     HQXContext *ctx = avctx->priv_data;
 
-    if (avctx->internal->is_copy)
-        return 0;
-
     ff_free_vlc(&ctx->cbp_vlc);
     for (i = 0; i < 3; i++) {
         ff_free_vlc(&ctx->dc_vlc[i]);
@@ -532,16 +534,16 @@ static av_cold int hqx_decode_init(AVCodecContext *avctx)
     return ff_hqx_init_vlcs(ctx);
 }
 
-AVCodec ff_hqx_decoder = {
-    .name           = "hqx",
-    .long_name      = NULL_IF_CONFIG_SMALL("Canopus HQX"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_HQX,
+const FFCodec ff_hqx_decoder = {
+    .p.name         = "hqx",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Canopus HQX"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_HQX,
     .priv_data_size = sizeof(HQXContext),
     .init           = hqx_decode_init,
-    .decode         = hqx_decode_frame,
+    FF_CODEC_DECODE_CB(hqx_decode_frame),
     .close          = hqx_decode_close,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SLICE_THREADS |
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SLICE_THREADS |
                       AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,

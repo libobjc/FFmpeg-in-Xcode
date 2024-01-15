@@ -28,6 +28,8 @@
  * J. van de Weijer, Th. Gevers, A. Gijsenij "Edge-Based Color Constancy".
  */
 
+#include "config_components.h"
+
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
@@ -116,12 +118,11 @@ static int set_gauss(AVFilterContext *ctx)
     int i;
 
     for (i = 0; i <= difford; ++i) {
-        s->gauss[i] = av_mallocz_array(filtersize, sizeof(*s->gauss[i]));
+        s->gauss[i] = av_calloc(filtersize, sizeof(*s->gauss[i]));
         if (!s->gauss[i]) {
             for (; i >= 0; --i) {
                 av_freep(&s->gauss[i]);
             }
-            av_log(ctx, AV_LOG_ERROR, "Out of memory while allocating gauss buffers.\n");
             return AVERROR(ENOMEM);
         }
     }
@@ -220,10 +221,10 @@ static int setup_derivative_buffers(AVFilterContext* ctx, ThreadData *td)
     av_log(ctx, AV_LOG_TRACE, "Allocating %d buffer(s) for grey edge.\n", nb_buff);
     for (b = 0; b <= nb_buff; ++b) { // We need difford + 1 buffers
         for (p = 0; p < NUM_PLANES; ++p) {
-            td->data[b][p] = av_mallocz_array(s->planeheight[p] * s->planewidth[p], sizeof(*td->data[b][p]));
+            td->data[b][p] = av_calloc(s->planeheight[p] * s->planewidth[p],
+                                       sizeof(*td->data[b][p]));
             if (!td->data[b][p]) {
                 cleanup_derivative_buffers(td, b + 1, p);
-                av_log(ctx, AV_LOG_ERROR, "Out of memory while allocating derivatives buffers.\n");
                 return AVERROR(ENOMEM);
             }
         }
@@ -280,7 +281,7 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
                     dst[INDX2D(r, c, width)] = 0;
                     for (g = 0; g < filtersize; ++g) {
                         dst[INDX2D(r, c, width)] += GAUSS(src, r,                        c + GINDX(filtersize, g),
-                                                          in_linesize, height, width, gauss[GINDX(filtersize, g)]);
+                                                          in_linesize, height, width, gauss[g]);
                     }
                 }
             }
@@ -295,7 +296,7 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
                     dst[INDX2D(r, c, width)] = 0;
                     for (g = 0; g < filtersize; ++g) {
                         dst[INDX2D(r, c, width)] += GAUSS(src, r + GINDX(filtersize, g), c,
-                                                          width, height, width, gauss[GINDX(filtersize, g)]);
+                                                          width, height, width, gauss[g]);
                     }
                 }
             }
@@ -368,7 +369,8 @@ get_deriv(AVFilterContext *ctx, ThreadData *td, int ord, int dir,
     td->meta_data[INDEX_DIR] = dir;
     td->meta_data[INDEX_SRC] = src;
     td->meta_data[INDEX_DST] = dst;
-    ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(dim, nb_threads));
+    ff_filter_execute(ctx, slice_get_derivative, td,
+                      NULL, FFMIN(dim, nb_threads));
 }
 
 /**
@@ -502,10 +504,10 @@ static int filter_grey_edge(AVFilterContext *ctx, AVFrame *in)
     }
     get_derivative(ctx, &td);
     if (difford > 0) {
-        ctx->internal->execute(ctx, slice_normalize, &td, NULL, nb_jobs);
+        ff_filter_execute(ctx, slice_normalize, &td, NULL, nb_jobs);
     }
 
-    ctx->internal->execute(ctx, filter_slice_grey_edge, &td, NULL, nb_jobs);
+    ff_filter_execute(ctx, filter_slice_grey_edge, &td, NULL, nb_jobs);
     if (!minknorm) {
         for (plane = 0; plane < NUM_PLANES; ++plane) {
             white[plane] = 0; // All values are absolute
@@ -633,19 +635,7 @@ static void chromatic_adaptation(AVFilterContext *ctx, AVFrame *in, AVFrame *out
 
     td.in  = in;
     td.out = out;
-    ctx->internal->execute(ctx, diagonal_transformation, &td, NULL, nb_jobs);
-}
-
-static int query_formats(AVFilterContext *ctx)
-{
-    static const enum AVPixelFormat pix_fmts[] = {
-        // TODO: support more formats
-        // FIXME: error when saving to .jpg
-        AV_PIX_FMT_GBRP,
-        AV_PIX_FMT_NONE
-    };
-
-    return ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
+    ff_filter_execute(ctx, diagonal_transformation, &td, NULL, nb_jobs);
 }
 
 static int config_props(AVFilterLink *inlink)
@@ -682,23 +672,29 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterLink *outlink = ctx->outputs[0];
     AVFrame *out;
     int ret;
+    int direct = 0;
 
     ret = illumination_estimation(ctx, in);
     if (ret) {
+        av_frame_free(&in);
         return ret;
     }
 
     if (av_frame_is_writable(in)) {
+        direct = 1;
         out = in;
     } else {
         out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
         if (!out) {
-            av_log(ctx, AV_LOG_ERROR, "Out of memory while allocating output video buffer.\n");
+            av_frame_free(&in);
             return AVERROR(ENOMEM);
         }
         av_frame_copy_props(out, in);
     }
     chromatic_adaptation(ctx, in, out);
+
+    if (!direct)
+        av_frame_free(&in);
 
     return ff_filter_frame(outlink, out);
 }
@@ -721,7 +717,6 @@ static const AVFilterPad colorconstancy_inputs[] = {
         .config_props = config_props,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad colorconstancy_outputs[] = {
@@ -729,7 +724,6 @@ static const AVFilterPad colorconstancy_outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
 #if CONFIG_GREYEDGE_FILTER
@@ -743,15 +737,17 @@ static const AVOption greyedge_options[] = {
 
 AVFILTER_DEFINE_CLASS(greyedge);
 
-AVFilter ff_vf_greyedge = {
+const AVFilter ff_vf_greyedge = {
     .name          = GREY_EDGE,
     .description   = NULL_IF_CONFIG_SMALL("Estimates scene illumination by grey edge assumption."),
     .priv_size     = sizeof(ColorConstancyContext),
     .priv_class    = &greyedge_class,
-    .query_formats = query_formats,
     .uninit        = uninit,
-    .inputs        = colorconstancy_inputs,
-    .outputs       = colorconstancy_outputs,
+    FILTER_INPUTS(colorconstancy_inputs),
+    FILTER_OUTPUTS(colorconstancy_outputs),
+    // TODO: support more formats
+    // FIXME: error when saving to .jpg
+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_GBRP),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
 };
 

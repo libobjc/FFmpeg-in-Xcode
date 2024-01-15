@@ -27,7 +27,7 @@
 #include "mathops.h"
 #include "avcodec.h"
 #include "bytestream.h"
-#include "internal.h"
+#include "codec_internal.h"
 #include "lzf.h"
 #include "texturedsp.h"
 #include "thread.h"
@@ -745,7 +745,7 @@ static int dxv_decompress_cocg(DXVContext *ctx, GetByteContext *gb,
     int skip0, skip1, oi0 = 0, oi1 = 0;
     int ret, state0 = 0, state1 = 0;
 
-    if (op_offset < 12)
+    if (op_offset < 12 || op_offset - 12 > bytestream2_get_bytes_left(gb))
         return AVERROR_INVALIDDATA;
 
     dst = tex_data;
@@ -755,7 +755,6 @@ static int dxv_decompress_cocg(DXVContext *ctx, GetByteContext *gb,
     skip0 = dxv_decompress_opcodes(gb, op_data0, op_size0);
     if (skip0 < 0)
         return skip0;
-    bytestream2_seek(gb, data_start + op_offset + skip0 - 12, SEEK_SET);
     if (op_size1 > max_op_size1)
         return AVERROR_INVALIDDATA;
     skip1 = dxv_decompress_opcodes(gb, op_data1, op_size1);
@@ -784,7 +783,7 @@ static int dxv_decompress_cocg(DXVContext *ctx, GetByteContext *gb,
             return ret;
     }
 
-    bytestream2_seek(gb, data_start + op_offset + skip0 + skip1 - 12, SEEK_SET);
+    bytestream2_seek(gb, data_start - 12 + op_offset + skip0 + skip1, SEEK_SET);
 
     return 0;
 }
@@ -798,6 +797,9 @@ static int dxv_decompress_yo(DXVContext *ctx, GetByteContext *gb,
     int data_start = bytestream2_tell(gb);
     uint8_t *dst, *table0[256] = { 0 }, *table1[256] = { 0 };
     int ret, state = 0, skip, oi = 0, v, vv;
+
+    if (op_offset < 8 || op_offset - 8 > bytestream2_get_bytes_left(gb))
+        return AVERROR_INVALIDDATA;
 
     dst = tex_data;
     bytestream2_skip(gb, op_offset - 8);
@@ -865,8 +867,8 @@ static int dxv_decompress_dxt5(AVCodecContext *avctx)
 {
     DXVContext *ctx = avctx->priv_data;
     GetByteContext *gbc = &ctx->gbc;
-    uint32_t value, op;
-    int idx, prev, state = 0;
+    uint32_t value, op, prev;
+    int idx, state = 0;
     int pos = 4;
     int run = 0;
     int probe, check;
@@ -1036,11 +1038,10 @@ static int dxv_decompress_raw(AVCodecContext *avctx)
     return 0;
 }
 
-static int dxv_decode(AVCodecContext *avctx, void *data,
+static int dxv_decode(AVCodecContext *avctx, AVFrame *frame,
                       int *got_frame, AVPacket *avpkt)
 {
     DXVContext *ctx = avctx->priv_data;
-    ThreadFrame tframe;
     GetByteContext *gbc = &ctx->gbc;
     int (*decompress_tex)(AVCodecContext *avctx);
     const char *msgcomp, *msgtext;
@@ -1209,18 +1210,17 @@ static int dxv_decode(AVCodecContext *avctx, void *data,
             return AVERROR_INVALIDDATA;
     }
 
-    tframe.f = data;
-    ret = ff_thread_get_buffer(avctx, &tframe, 0);
+    ret = ff_thread_get_buffer(avctx, frame, 0);
     if (ret < 0)
         return ret;
 
     /* Now decompress the texture with the standard functions. */
     avctx->execute2(avctx, decompress_texture_thread,
-                    tframe.f, NULL, ctx->slice_count);
+                    frame, NULL, ctx->slice_count);
 
     /* Frame is ready to be output. */
-    tframe.f->pict_type = AV_PICTURE_TYPE_I;
-    tframe.f->key_frame = 1;
+    frame->pict_type = AV_PICTURE_TYPE_I;
+    frame->key_frame = 1;
     *got_frame = 1;
 
     return avpkt->size;
@@ -1260,16 +1260,16 @@ static int dxv_close(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_dxv_decoder = {
-    .name           = "dxv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Resolume DXV"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_DXV,
+const FFCodec ff_dxv_decoder = {
+    .p.name         = "dxv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Resolume DXV"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_DXV,
     .init           = dxv_init,
-    .decode         = dxv_decode,
+    FF_CODEC_DECODE_CB(dxv_decode),
     .close          = dxv_close,
     .priv_data_size = sizeof(DXVContext),
-    .capabilities   = AV_CODEC_CAP_DR1 |
+    .p.capabilities = AV_CODEC_CAP_DR1 |
                       AV_CODEC_CAP_SLICE_THREADS |
                       AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |

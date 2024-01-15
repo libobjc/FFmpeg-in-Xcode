@@ -29,11 +29,12 @@
 #include "avcodec.h"
 #include "cbs.h"
 #include "cbs_h264.h"
+#include "codec_internal.h"
 #include "h264.h"
 #include "h264_levels.h"
 #include "h264_sei.h"
-#include "internal.h"
 #include "vaapi_encode.h"
+#include "version.h"
 
 enum {
     SEI_TIMING         = 0x01,
@@ -90,13 +91,12 @@ typedef struct VAAPIEncodeH264Context {
     H264RawAUD   raw_aud;
     H264RawSPS   raw_sps;
     H264RawPPS   raw_pps;
-    H264RawSEI   raw_sei;
     H264RawSlice raw_slice;
 
     H264RawSEIBufferingPeriod      sei_buffering_period;
     H264RawSEIPicTiming            sei_pic_timing;
     H264RawSEIRecoveryPoint        sei_recovery_point;
-    H264RawSEIUserDataUnregistered sei_identifier;
+    SEIRawUserDataUnregistered     sei_identifier;
     char                          *sei_identifier_string;
 
     int aud_needed;
@@ -135,11 +135,10 @@ static int vaapi_encode_h264_add_nal(AVCodecContext *avctx,
                                      CodedBitstreamFragment *au,
                                      void *nal_unit)
 {
-    VAAPIEncodeH264Context *priv = avctx->priv_data;
     H264RawNALUnitHeader *header = nal_unit;
     int err;
 
-    err = ff_cbs_insert_unit_content(priv->cbc, au, -1,
+    err = ff_cbs_insert_unit_content(au, -1,
                                      header->nal_unit_type, nal_unit, NULL);
     if (err < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to add NAL unit: "
@@ -174,7 +173,7 @@ static int vaapi_encode_h264_write_sequence_header(AVCodecContext *avctx,
 
     err = vaapi_encode_h264_write_access_unit(avctx, data, data_len, au);
 fail:
-    ff_cbs_fragment_reset(priv->cbc, au);
+    ff_cbs_fragment_reset(au);
     return err;
 }
 
@@ -200,7 +199,7 @@ static int vaapi_encode_h264_write_slice_header(AVCodecContext *avctx,
 
     err = vaapi_encode_h264_write_access_unit(avctx, data, data_len, au);
 fail:
-    ff_cbs_fragment_reset(priv->cbc, au);
+    ff_cbs_fragment_reset(au);
     return err;
 }
 
@@ -211,11 +210,9 @@ static int vaapi_encode_h264_write_extra_header(AVCodecContext *avctx,
 {
     VAAPIEncodeH264Context *priv = avctx->priv_data;
     CodedBitstreamFragment   *au = &priv->current_access_unit;
-    int err, i;
+    int err;
 
     if (priv->sei_needed) {
-        H264RawSEI *sei = &priv->raw_sei;
-
         if (priv->aud_needed) {
             err = vaapi_encode_h264_add_nal(avctx, au, &priv->raw_aud);
             if (err < 0)
@@ -223,48 +220,42 @@ static int vaapi_encode_h264_write_extra_header(AVCodecContext *avctx,
             priv->aud_needed = 0;
         }
 
-        *sei = (H264RawSEI) {
-            .nal_unit_header = {
-                .nal_unit_type = H264_NAL_SEI,
-            },
-        };
-
-        i = 0;
-
         if (priv->sei_needed & SEI_IDENTIFIER) {
-            sei->payload[i].payload_type = H264_SEI_TYPE_USER_DATA_UNREGISTERED;
-            sei->payload[i].payload.user_data_unregistered = priv->sei_identifier;
-            ++i;
+            err = ff_cbs_sei_add_message(priv->cbc, au, 1,
+                                         SEI_TYPE_USER_DATA_UNREGISTERED,
+                                         &priv->sei_identifier, NULL);
+            if (err < 0)
+                goto fail;
         }
         if (priv->sei_needed & SEI_TIMING) {
             if (pic->type == PICTURE_TYPE_IDR) {
-                sei->payload[i].payload_type = H264_SEI_TYPE_BUFFERING_PERIOD;
-                sei->payload[i].payload.buffering_period = priv->sei_buffering_period;
-                ++i;
+                err = ff_cbs_sei_add_message(priv->cbc, au, 1,
+                                             SEI_TYPE_BUFFERING_PERIOD,
+                                             &priv->sei_buffering_period, NULL);
+                if (err < 0)
+                    goto fail;
             }
-            sei->payload[i].payload_type = H264_SEI_TYPE_PIC_TIMING;
-            sei->payload[i].payload.pic_timing = priv->sei_pic_timing;
-            ++i;
+            err = ff_cbs_sei_add_message(priv->cbc, au, 1,
+                                         SEI_TYPE_PIC_TIMING,
+                                         &priv->sei_pic_timing, NULL);
+            if (err < 0)
+                goto fail;
         }
         if (priv->sei_needed & SEI_RECOVERY_POINT) {
-            sei->payload[i].payload_type = H264_SEI_TYPE_RECOVERY_POINT;
-            sei->payload[i].payload.recovery_point = priv->sei_recovery_point;
-            ++i;
+            err = ff_cbs_sei_add_message(priv->cbc, au, 1,
+                                         SEI_TYPE_RECOVERY_POINT,
+                                         &priv->sei_recovery_point, NULL);
+            if (err < 0)
+                goto fail;
         }
 
-        sei->payload_count = i;
-        av_assert0(sei->payload_count > 0);
-
-        err = vaapi_encode_h264_add_nal(avctx, au, sei);
-        if (err < 0)
-            goto fail;
         priv->sei_needed = 0;
 
         err = vaapi_encode_h264_write_access_unit(avctx, data, data_len, au);
         if (err < 0)
             goto fail;
 
-        ff_cbs_fragment_reset(priv->cbc, au);
+        ff_cbs_fragment_reset(au);
 
         *type = VAEncPackedHeaderRawData;
         return 0;
@@ -286,7 +277,7 @@ static int vaapi_encode_h264_write_extra_header(AVCodecContext *avctx,
     }
 
 fail:
-    ff_cbs_fragment_reset(priv->cbc, au);
+    ff_cbs_fragment_reset(au);
     return err;
 }
 
@@ -412,30 +403,20 @@ static int vaapi_encode_h264_init_sequence_params(AVCodecContext *avctx)
         sps->vui.aspect_ratio_info_present_flag = 1;
     }
 
-    if (avctx->color_range     != AVCOL_RANGE_UNSPECIFIED ||
-        avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+    // Unspecified video format, from table E-2.
+    sps->vui.video_format             = 5;
+    sps->vui.video_full_range_flag    =
+        avctx->color_range == AVCOL_RANGE_JPEG;
+    sps->vui.colour_primaries         = avctx->color_primaries;
+    sps->vui.transfer_characteristics = avctx->color_trc;
+    sps->vui.matrix_coefficients      = avctx->colorspace;
+    if (avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
         avctx->color_trc       != AVCOL_TRC_UNSPECIFIED ||
-        avctx->colorspace      != AVCOL_SPC_UNSPECIFIED) {
+        avctx->colorspace      != AVCOL_SPC_UNSPECIFIED)
+        sps->vui.colour_description_present_flag = 1;
+    if (avctx->color_range     != AVCOL_RANGE_UNSPECIFIED ||
+        sps->vui.colour_description_present_flag)
         sps->vui.video_signal_type_present_flag = 1;
-        sps->vui.video_format      = 5; // Unspecified.
-        sps->vui.video_full_range_flag =
-            avctx->color_range == AVCOL_RANGE_JPEG;
-
-        if (avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
-            avctx->color_trc       != AVCOL_TRC_UNSPECIFIED ||
-            avctx->colorspace      != AVCOL_SPC_UNSPECIFIED) {
-            sps->vui.colour_description_present_flag = 1;
-            sps->vui.colour_primaries         = avctx->color_primaries;
-            sps->vui.transfer_characteristics = avctx->color_trc;
-            sps->vui.matrix_coefficients      = avctx->colorspace;
-        }
-    } else {
-        sps->vui.video_format             = 5;
-        sps->vui.video_full_range_flag    = 0;
-        sps->vui.colour_primaries         = avctx->color_primaries;
-        sps->vui.transfer_characteristics = avctx->color_trc;
-        sps->vui.matrix_coefficients      = avctx->colorspace;
-    }
 
     if (avctx->chroma_sample_location != AVCHROMA_LOC_UNSPECIFIED) {
         sps->vui.chroma_loc_info_present_flag = 1;
@@ -1130,6 +1111,8 @@ static av_cold int vaapi_encode_h264_configure(AVCodecContext *avctx)
         }
     }
 
+    ctx->roi_quant_range = 51 + 6 * (ctx->profile->depth - 8);
+
     return 0;
 }
 
@@ -1240,7 +1223,7 @@ static av_cold int vaapi_encode_h264_close(AVCodecContext *avctx)
 {
     VAAPIEncodeH264Context *priv = avctx->priv_data;
 
-    ff_cbs_fragment_free(priv->cbc, &priv->current_access_unit);
+    ff_cbs_fragment_free(&priv->current_access_unit);
     ff_cbs_close(&priv->cbc);
     av_freep(&priv->sei_identifier_string);
 
@@ -1322,7 +1305,7 @@ static const AVOption vaapi_encode_h264_options[] = {
     { NULL },
 };
 
-static const AVCodecDefault vaapi_encode_h264_defaults[] = {
+static const FFCodecDefault vaapi_encode_h264_defaults[] = {
     { "b",              "0"   },
     { "bf",             "2"   },
     { "g",              "120" },
@@ -1342,22 +1325,24 @@ static const AVClass vaapi_encode_h264_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_h264_vaapi_encoder = {
-    .name           = "h264_vaapi",
-    .long_name      = NULL_IF_CONFIG_SMALL("H.264/AVC (VAAPI)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_H264,
+const FFCodec ff_h264_vaapi_encoder = {
+    .p.name         = "h264_vaapi",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("H.264/AVC (VAAPI)"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_H264,
     .priv_data_size = sizeof(VAAPIEncodeH264Context),
     .init           = &vaapi_encode_h264_init,
-    .send_frame     = &ff_vaapi_encode_send_frame,
-    .receive_packet = &ff_vaapi_encode_receive_packet,
+    FF_CODEC_RECEIVE_PACKET_CB(&ff_vaapi_encode_receive_packet),
     .close          = &vaapi_encode_h264_close,
-    .priv_class     = &vaapi_encode_h264_class,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .p.priv_class   = &vaapi_encode_h264_class,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE |
+                      AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .defaults       = vaapi_encode_h264_defaults,
-    .pix_fmts = (const enum AVPixelFormat[]) {
+    .p.pix_fmts = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_VAAPI,
         AV_PIX_FMT_NONE,
     },
-    .wrapper_name   = "vaapi",
+    .hw_configs     = ff_vaapi_encode_hw_configs,
+    .p.wrapper_name = "vaapi",
 };

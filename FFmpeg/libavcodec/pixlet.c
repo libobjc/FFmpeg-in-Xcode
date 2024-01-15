@@ -27,6 +27,7 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "internal.h"
 #include "thread.h"
@@ -58,6 +59,7 @@ typedef struct PixletContext {
     int16_t *filter[2];
     int16_t *prediction;
     int64_t scaling[4][2][NB_LEVELS];
+    uint16_t lut[65536];
     SubBand band[4][NB_LEVELS * 3 + 1];
 } PixletContext;
 
@@ -196,7 +198,7 @@ static int read_low_coeffs(AVCodecContext *avctx, int16_t *dst, int size,
     return get_bits_count(bc) >> 3;
 }
 
-static int read_high_coeffs(AVCodecContext *avctx, uint8_t *src, int16_t *dst,
+static int read_high_coeffs(AVCodecContext *avctx, const uint8_t *src, int16_t *dst,
                             int size, int c, int a, int d,
                             int width, ptrdiff_t stride)
 {
@@ -221,7 +223,7 @@ static int read_high_coeffs(AVCodecContext *avctx, uint8_t *src, int16_t *dst,
     length = 25 - nbits;
 
     while (i < size) {
-        if (state >> 8 != -3)
+        if (((state >> 8) + 3) & 0xFFFFFFF)
             value = ff_clz((state >> 8) + 3) ^ 0x1F;
         else
             value = -1;
@@ -311,7 +313,7 @@ static int read_high_coeffs(AVCodecContext *avctx, uint8_t *src, int16_t *dst,
     return get_bits_count(bc) >> 3;
 }
 
-static int read_highpass(AVCodecContext *avctx, uint8_t *ptr,
+static int read_highpass(AVCodecContext *avctx, const uint8_t *ptr,
                          int plane, AVFrame *frame)
 {
     PixletContext *ctx = avctx->priv_data;
@@ -404,7 +406,7 @@ static void filterfn(int16_t *dest, int16_t *tmp, unsigned size, int64_t scale)
                 (int64_t) low [i - 1] * -INT64_C(325392907)  +
                 (int64_t) high[i + 0] *  INT64_C(1518500249) +
                 (int64_t) high[i - 1] *  INT64_C(1518500249);
-        dest[i * 2] = av_clip_int16(((value >> 32) * scale) >> 32);
+        dest[i * 2] = av_clip_int16(((value >> 32) * (uint64_t)scale) >> 32);
     }
 
     for (i = 0; i < hsize; i++) {
@@ -415,7 +417,7 @@ static void filterfn(int16_t *dest, int16_t *tmp, unsigned size, int64_t scale)
                 (int64_t) high[i + 1] *  INT64_C(303700064)  +
                 (int64_t) high[i + 0] * -INT64_C(3644400640) +
                 (int64_t) high[i - 1] *  INT64_C(303700064);
-        dest[i * 2 + 1] = av_clip_int16(((value >> 32) * scale) >> 32);
+        dest[i * 2 + 1] = av_clip_int16(((value >> 32) * (uint64_t)scale) >> 32);
     }
 }
 
@@ -462,11 +464,27 @@ static void reconstruction(AVCodecContext *avctx, int16_t *dest,
     }
 }
 
-static void postprocess_luma(AVFrame *frame, int w, int h, int depth)
+static void build_luma_lut(AVCodecContext *avctx, int depth)
 {
+    PixletContext *ctx = avctx->priv_data;
+    int max = (1 << depth) - 1;
+
+    if (ctx->depth == depth)
+        return;
+    ctx->depth = depth;
+
+    for (int i = 0; i < FF_ARRAY_ELEMS(ctx->lut); i++)
+        ctx->lut[i] = ((int64_t)i * i * 65535LL) / max / max;
+}
+
+static void postprocess_luma(AVCodecContext *avctx, AVFrame *frame,
+                             int w, int h, int depth)
+{
+    PixletContext *ctx = avctx->priv_data;
     uint16_t *dsty = (uint16_t *)frame->data[0];
     int16_t *srcy  = (int16_t *)frame->data[0];
     ptrdiff_t stridey = frame->linesize[0] / 2;
+    uint16_t *lut = ctx->lut;
     int i, j;
 
     for (j = 0; j < h; j++) {
@@ -476,8 +494,7 @@ static void postprocess_luma(AVFrame *frame, int w, int h, int depth)
             else if (srcy[i] > ((1 << depth) - 1))
                 dsty[i] = 65535;
             else
-                dsty[i] = ((int64_t) srcy[i] * srcy[i] * 65535) /
-                          ((1 << depth) - 1) / ((1 << depth) - 1);
+                dsty[i] = lut[srcy[i]];
         }
         dsty += stridey;
         srcy += stridey;
@@ -509,7 +526,7 @@ static void postprocess_chroma(AVFrame *frame, int w, int h, int depth)
 }
 
 static int decode_plane(AVCodecContext *avctx, int plane,
-                        AVPacket *avpkt, AVFrame *frame)
+                        const AVPacket *avpkt, AVFrame *frame)
 {
     PixletContext *ctx = avctx->priv_data;
     ptrdiff_t stride   = frame->linesize[plane] / 2;
@@ -584,19 +601,17 @@ static int decode_plane(AVCodecContext *avctx, int plane,
     return 0;
 }
 
-static int pixlet_decode_frame(AVCodecContext *avctx, void *data,
+static int pixlet_decode_frame(AVCodecContext *avctx, AVFrame *p,
                                int *got_frame, AVPacket *avpkt)
 {
     PixletContext *ctx = avctx->priv_data;
     int i, w, h, width, height, ret, version;
-    AVFrame *p = data;
-    ThreadFrame frame = { .f = data };
-    uint32_t pktsize;
+    uint32_t pktsize, depth;
 
     bytestream2_init(&ctx->gb, avpkt->data, avpkt->size);
 
     pktsize = bytestream2_get_be32(&ctx->gb);
-    if (pktsize <= 44 || pktsize - 4 > bytestream2_get_bytes_left(&ctx->gb)) {
+    if (pktsize <= 44 + (NB_LEVELS * 8 + 6) * 3 || pktsize - 4 > bytestream2_get_bytes_left(&ctx->gb)) {
         av_log(avctx, AV_LOG_ERROR, "Invalid packet size %"PRIu32"\n", pktsize);
         return AVERROR_INVALIDDATA;
     }
@@ -623,11 +638,13 @@ static int pixlet_decode_frame(AVCodecContext *avctx, void *data,
     ctx->levels = bytestream2_get_be32(&ctx->gb);
     if (ctx->levels != NB_LEVELS)
         return AVERROR_INVALIDDATA;
-    ctx->depth = bytestream2_get_be32(&ctx->gb);
-    if (ctx->depth < 8 || ctx->depth > 15) {
-        avpriv_request_sample(avctx, "Depth %d", ctx->depth);
+    depth = bytestream2_get_be32(&ctx->gb);
+    if (depth < 8 || depth > 15) {
+        avpriv_request_sample(avctx, "Depth %d", depth);
         return AVERROR_INVALIDDATA;
     }
+
+    build_luma_lut(avctx, depth);
 
     ret = ff_set_dimensions(avctx, w, h);
     if (ret < 0)
@@ -655,52 +672,36 @@ static int pixlet_decode_frame(AVCodecContext *avctx, void *data,
     p->key_frame = 1;
     p->color_range = AVCOL_RANGE_JPEG;
 
-    ret = ff_thread_get_buffer(avctx, &frame, 0);
+    ret = ff_thread_get_buffer(avctx, p, 0);
     if (ret < 0)
         return ret;
 
     for (i = 0; i < 3; i++) {
-        ret = decode_plane(avctx, i, avpkt, frame.f);
+        ret = decode_plane(avctx, i, avpkt, p);
         if (ret < 0)
             return ret;
         if (avctx->flags & AV_CODEC_FLAG_GRAY)
             break;
     }
 
-    postprocess_luma(frame.f, ctx->w, ctx->h, ctx->depth);
-    postprocess_chroma(frame.f, ctx->w >> 1, ctx->h >> 1, ctx->depth);
+    postprocess_luma(avctx, p, ctx->w, ctx->h, ctx->depth);
+    postprocess_chroma(p, ctx->w >> 1, ctx->h >> 1, ctx->depth);
 
     *got_frame = 1;
 
     return pktsize;
 }
 
-#if HAVE_THREADS
-static int pixlet_init_thread_copy(AVCodecContext *avctx)
-{
-    PixletContext *ctx = avctx->priv_data;
-
-    ctx->filter[0]  = NULL;
-    ctx->filter[1]  = NULL;
-    ctx->prediction = NULL;
-    ctx->w = 0;
-    ctx->h = 0;
-
-    return 0;
-}
-#endif /* HAVE_THREADS */
-
-AVCodec ff_pixlet_decoder = {
-    .name             = "pixlet",
-    .long_name        = NULL_IF_CONFIG_SMALL("Apple Pixlet"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_PIXLET,
+const FFCodec ff_pixlet_decoder = {
+    .p.name           = "pixlet",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("Apple Pixlet"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_PIXLET,
     .init             = pixlet_init,
-    .init_thread_copy = ONLY_IF_THREADS_ENABLED(pixlet_init_thread_copy),
     .close            = pixlet_close,
-    .decode           = pixlet_decode_frame,
+    FF_CODEC_DECODE_CB(pixlet_decode_frame),
     .priv_data_size   = sizeof(PixletContext),
-    .capabilities     = AV_CODEC_CAP_DR1 |
+    .p.capabilities   = AV_CODEC_CAP_DR1 |
                         AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE |
                         FF_CODEC_CAP_INIT_CLEANUP,

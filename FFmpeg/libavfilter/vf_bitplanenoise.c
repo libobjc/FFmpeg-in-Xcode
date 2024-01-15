@@ -47,31 +47,23 @@ static const AVOption bitplanenoise_options[] = {
 
 AVFILTER_DEFINE_CLASS(bitplanenoise);
 
-static int query_formats(AVFilterContext *ctx)
-{
-    static const enum AVPixelFormat pixfmts[] = {
-        AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV411P,
-        AV_PIX_FMT_YUV440P,
-        AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ411P,
-        AV_PIX_FMT_YUVJ440P,
-        AV_PIX_FMT_YUV444P9, AV_PIX_FMT_YUV422P9, AV_PIX_FMT_YUV420P9,
-        AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUV420P10,
-        AV_PIX_FMT_YUV440P10,
-        AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV420P12,
-        AV_PIX_FMT_YUV440P12,
-        AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV420P14,
-        AV_PIX_FMT_YUV444P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV420P16,
-        AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
-        AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
-        AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9, AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
-        AV_PIX_FMT_NONE
-    };
-
-    AVFilterFormats *formats = ff_make_format_list(pixfmts);
-    if (!formats)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, formats);
-}
+static const enum AVPixelFormat pixfmts[] = {
+    AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV411P,
+    AV_PIX_FMT_YUV440P,
+    AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ411P,
+    AV_PIX_FMT_YUVJ440P,
+    AV_PIX_FMT_YUV444P9, AV_PIX_FMT_YUV422P9, AV_PIX_FMT_YUV420P9,
+    AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUV420P10,
+    AV_PIX_FMT_YUV440P10,
+    AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV420P12,
+    AV_PIX_FMT_YUV440P12,
+    AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV420P14,
+    AV_PIX_FMT_YUV444P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV420P16,
+    AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
+    AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
+    AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9, AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
+    AV_PIX_FMT_NONE
+};
 
 static int config_input(AVFilterLink *inlink)
 {
@@ -122,7 +114,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
     if (s->depth <= 8) {
         for (plane = 0; plane < s->nb_planes; plane++) {
-            const int linesize = in->linesize[plane];
+            const int linesize = s->planeheight[plane] > 1 ? in->linesize[plane] : 0;
             const int dlinesize = out->linesize[plane];
             uint8_t *val = in->data[plane];
             uint8_t *dst = s->filter ? out->data[plane]: NULL;
@@ -151,7 +143,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         }
     } else {
         for (plane = 0; plane < s->nb_planes; plane++) {
-            const int linesize = in->linesize[plane] / 2;
+            const int linesize = s->planeheight[plane] > 1 ? in->linesize[plane] / 2 : 0;
             const int dlinesize = out->linesize[plane] / 2;
             uint16_t *val = (uint16_t *)in->data[plane];
             uint16_t *dst = s->filter ? (uint16_t *)out->data[plane] : NULL;
@@ -203,7 +195,6 @@ static const AVFilterPad inputs[] = {
         .filter_frame   = filter_frame,
         .config_props   = config_input,
     },
-    { NULL }
 };
 
 static const AVFilterPad outputs[] = {
@@ -211,16 +202,15 @@ static const AVFilterPad outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_bitplanenoise = {
+const AVFilter ff_vf_bitplanenoise = {
     .name           = "bitplanenoise",
     .description    = NULL_IF_CONFIG_SMALL("Measure bit plane noise."),
     .priv_size      = sizeof(BPNContext),
-    .query_formats  = query_formats,
-    .inputs         = inputs,
-    .outputs        = outputs,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
+    FILTER_PIXFMTS_ARRAY(pixfmts),
     .priv_class     = &bitplanenoise_class,
     .flags          = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

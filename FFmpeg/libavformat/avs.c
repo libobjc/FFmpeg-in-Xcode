@@ -114,7 +114,6 @@ avs_read_video_packet(AVFormatContext * s, AVPacket * pkt,
     pkt->data[palette_size + 3] = (size >> 8) & 0xFF;
     ret = avio_read(s->pb, pkt->data + palette_size + 4, size - 4) + 4;
     if (ret < size) {
-        av_packet_unref(pkt);
         return AVERROR(EIO);
     }
 
@@ -129,7 +128,8 @@ avs_read_video_packet(AVFormatContext * s, AVPacket * pkt,
 static int avs_read_audio_packet(AVFormatContext * s, AVPacket * pkt)
 {
     AvsFormat *avs = s->priv_data;
-    int ret, size;
+    int ret;
+    int64_t size;
 
     size = avio_tell(s->pb);
     ret = ff_voc_get_packet(s, pkt, avs->st_audio, avs->remaining_audio_size);
@@ -140,6 +140,10 @@ static int avs_read_audio_packet(AVFormatContext * s, AVPacket * pkt)
         return 0;    /* this indicate EOS */
     if (ret < 0)
         return ret;
+    if (size != (int)size) {
+        av_packet_unref(pkt);
+        return AVERROR(EDOM);
+    }
 
     pkt->stream_index = avs->st_audio->index;
     pkt->flags |= AV_PKT_FLAG_KEY;
@@ -224,17 +228,11 @@ static int avs_read_packet(AVFormatContext * s, AVPacket * pkt)
     }
 }
 
-static int avs_read_close(AVFormatContext * s)
-{
-    return 0;
-}
-
-AVInputFormat ff_avs_demuxer = {
+const AVInputFormat ff_avs_demuxer = {
     .name           = "avs",
     .long_name      = NULL_IF_CONFIG_SMALL("Argonaut Games Creature Shock"),
     .priv_data_size = sizeof(AvsFormat),
     .read_probe     = avs_probe,
     .read_header    = avs_read_header,
     .read_packet    = avs_read_packet,
-    .read_close     = avs_read_close,
 };

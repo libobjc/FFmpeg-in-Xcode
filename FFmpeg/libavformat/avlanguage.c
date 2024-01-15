@@ -19,8 +19,7 @@
  */
 
 #include "avlanguage.h"
-#include "libavutil/avstring.h"
-#include "libavutil/common.h"
+#include "libavutil/macros.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -763,10 +762,3 @@ const char *ff_convert_lang_to(const char *lang, enum AVLangCodespace target_cod
 
     return NULL;
 }
-
-#if LIBAVFORMAT_VERSION_MAJOR < 58
-const char *av_convert_lang_to(const char *lang, enum AVLangCodespace target_codespace)
-{
-    return ff_convert_lang_to(lang, target_codespace);
-}
-#endif

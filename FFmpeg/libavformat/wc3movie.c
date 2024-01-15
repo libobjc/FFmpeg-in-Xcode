@@ -54,7 +54,6 @@
 
 /* always use the same PCM audio parameters */
 #define WC3_SAMPLE_RATE 22050
-#define WC3_AUDIO_CHANNELS 1
 #define WC3_AUDIO_BITS 16
 
 /* nice, constant framerate */
@@ -69,9 +68,18 @@ typedef struct Wc3DemuxContext {
     int video_stream_index;
     int audio_stream_index;
 
-    AVPacket vpkt;
+    AVPacket *vpkt;
 
 } Wc3DemuxContext;
+
+static int wc3_read_close(AVFormatContext *s)
+{
+    Wc3DemuxContext *wc3 = s->priv_data;
+
+    av_packet_free(&wc3->vpkt);
+
+    return 0;
+}
 
 static int wc3_probe(const AVProbeData *p)
 {
@@ -100,8 +108,9 @@ static int wc3_read_header(AVFormatContext *s)
     wc3->height = WC3_DEFAULT_HEIGHT;
     wc3->pts = 0;
     wc3->video_stream_index = wc3->audio_stream_index = 0;
-    av_init_packet(&wc3->vpkt);
-    wc3->vpkt.data = NULL; wc3->vpkt.size = 0;
+    wc3->vpkt = av_packet_alloc();
+    if (!wc3->vpkt)
+        return AVERROR(ENOMEM);
 
     /* skip the first 3 32-bit numbers */
     avio_skip(pb, 12);
@@ -130,8 +139,10 @@ static int wc3_read_header(AVFormatContext *s)
             buffer = av_malloc(size+1);
             if (!buffer)
                 return AVERROR(ENOMEM);
-            if ((ret = avio_read(pb, buffer, size)) != size)
+            if ((ret = avio_read(pb, buffer, size)) != size) {
+                av_freep(&buffer);
                 return AVERROR(EIO);
+            }
             buffer[size] = 0;
             av_dict_set(&s->metadata, "title", buffer,
                                    AV_DICT_DONT_STRDUP_VAL);
@@ -146,7 +157,7 @@ static int wc3_read_header(AVFormatContext *s)
         case PALT_TAG:
             /* one of several palettes */
             avio_seek(pb, -8, SEEK_CUR);
-            av_append_packet(pb, &wc3->vpkt, 8 + PALETTE_SIZE);
+            av_append_packet(pb, wc3->vpkt, 8 + PALETTE_SIZE);
             break;
 
         default:
@@ -183,13 +194,12 @@ static int wc3_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
     st->codecpar->codec_tag = 1;
-    st->codecpar->channels = WC3_AUDIO_CHANNELS;
-    st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+    st->codecpar->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     st->codecpar->bits_per_coded_sample = WC3_AUDIO_BITS;
     st->codecpar->sample_rate = WC3_SAMPLE_RATE;
-    st->codecpar->bit_rate = st->codecpar->channels * st->codecpar->sample_rate *
+    st->codecpar->bit_rate = st->codecpar->ch_layout.nb_channels * st->codecpar->sample_rate *
         st->codecpar->bits_per_coded_sample;
-    st->codecpar->block_align = WC3_AUDIO_BITS * WC3_AUDIO_CHANNELS;
+    st->codecpar->block_align = WC3_AUDIO_BITS * st->codecpar->ch_layout.nb_channels;
 
     return 0;
 }
@@ -222,18 +232,17 @@ static int wc3_read_packet(AVFormatContext *s,
         case SHOT_TAG:
             /* load up new palette */
             avio_seek(pb, -8, SEEK_CUR);
-            av_append_packet(pb, &wc3->vpkt, 8 + 4);
+            av_append_packet(pb, wc3->vpkt, 8 + 4);
             break;
 
         case VGA__TAG:
             /* send out video chunk */
             avio_seek(pb, -8, SEEK_CUR);
-            ret= av_append_packet(pb, &wc3->vpkt, 8 + size);
+            ret= av_append_packet(pb, wc3->vpkt, 8 + size);
             // ignore error if we have some data
-            if (wc3->vpkt.size > 0)
+            if (wc3->vpkt->size > 0)
                 ret = 0;
-            *pkt = wc3->vpkt;
-            wc3->vpkt.data = NULL; wc3->vpkt.size = 0;
+            av_packet_move_ref(pkt, wc3->vpkt);
             pkt->stream_index = wc3->video_stream_index;
             pkt->pts = wc3->pts;
             packet_read = 1;
@@ -284,20 +293,11 @@ static int wc3_read_packet(AVFormatContext *s,
     return ret;
 }
 
-static int wc3_read_close(AVFormatContext *s)
-{
-    Wc3DemuxContext *wc3 = s->priv_data;
-
-    if (wc3->vpkt.size > 0)
-        av_packet_unref(&wc3->vpkt);
-
-    return 0;
-}
-
-AVInputFormat ff_wc3_demuxer = {
+const AVInputFormat ff_wc3_demuxer = {
     .name           = "wc3movie",
     .long_name      = NULL_IF_CONFIG_SMALL("Wing Commander III movie"),
     .priv_data_size = sizeof(Wc3DemuxContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = wc3_probe,
     .read_header    = wc3_read_header,
     .read_packet    = wc3_read_packet,

@@ -27,12 +27,13 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/thread.h"
+#include "libavutil/tx.h"
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "internal.h"
-#include "fft.h"
 
 typedef struct QDMCTone {
     uint8_t mode;
@@ -66,8 +67,10 @@ typedef struct QDMCContext {
     float *buffer_ptr;
     int rndval;
 
-    DECLARE_ALIGNED(32, FFTComplex, cmplx)[2][512];
-    FFTContext fft_ctx;
+    DECLARE_ALIGNED(32, AVComplexFloat, cmplx_in)[2][512];
+    DECLARE_ALIGNED(32, AVComplexFloat, cmplx_out)[2][512];
+    AVTXContext *fft_ctx;
+    av_tx_fn itx_fn;
 } QDMCContext;
 
 static float sin_table[512];
@@ -119,109 +122,62 @@ static const uint8_t noise_bands_selector[] = {
     4, 3, 2, 1, 0, 0, 0,
 };
 
-static const uint8_t noise_value_bits[] = {
-    12, 7, 9, 7, 10, 9, 11, 9, 9, 2, 9, 9, 9, 9,
-    9, 3, 9, 10, 10, 12, 2, 3, 3, 5, 5, 6, 7,
+static const uint8_t qdmc_hufftab[][2] = {
+    /* Noise value - 27 entries */
+    {  1,  2 }, { 10,  7 }, { 26,  9 }, { 22,  9 }, { 24,  9 }, { 14,  9 },
+    {  8,  6 }, {  6,  5 }, {  7,  5 }, {  9,  7 }, { 30,  9 }, { 32, 10 },
+    { 13, 10 }, { 20,  9 }, { 28,  9 }, { 12,  7 }, { 15, 11 }, { 36, 12 },
+    {  0, 12 }, { 34, 10 }, { 18,  9 }, { 11,  9 }, { 16,  9 }, {  5,  3 },
+    {  2,  3 }, {  4,  3 }, {  3,  2 },
+    /* Noise segment length - 12 entries */
+    {  1,  1 }, {  2,  2 }, {  3,  4 }, {  8,  9 }, {  9, 10 }, {  0, 10 },
+    { 13,  8 }, {  7,  7 }, {  6,  6 }, { 17,  5 }, {  4,  4 }, {  5,  4 },
+    /* Amplitude - 28 entries */
+    { 18,  3 }, { 16,  3 }, { 22,  7 }, {  8, 10 }, {  4, 10 }, {  3,  9 },
+    {  2,  8 }, { 23,  8 }, { 10,  8 }, { 11,  7 }, { 21,  5 }, { 20,  4 },
+    {  1,  7 }, {  7, 10 }, {  5, 10 }, {  9,  9 }, {  6, 10 }, { 25, 11 },
+    { 26, 12 }, { 27, 13 }, {  0, 13 }, { 24,  9 }, { 12,  6 }, { 13,  5 },
+    { 14,  4 }, { 19,  3 }, { 15,  3 }, { 17,  2 },
+    /* Frequency differences - 47 entries */
+    {  2,  4 }, { 14,  6 }, { 26,  7 }, { 31,  8 }, { 32,  9 }, { 35,  9 },
+    {  7,  5 }, { 10,  5 }, { 22,  7 }, { 27,  7 }, { 19,  7 }, { 20,  7 },
+    {  4,  5 }, { 13,  5 }, { 17,  6 }, { 15,  6 }, {  8,  5 }, {  5,  4 },
+    { 28,  7 }, { 33,  9 }, { 36, 11 }, { 38, 12 }, { 42, 14 }, { 45, 16 },
+    { 44, 18 }, {  0, 18 }, { 46, 17 }, { 43, 15 }, { 40, 13 }, { 37, 11 },
+    { 39, 12 }, { 41, 12 }, { 34,  8 }, { 16,  6 }, { 11,  5 }, {  9,  4 },
+    {  1,  2 }, {  3,  4 }, { 30,  7 }, { 29,  7 }, { 23,  6 }, { 24,  6 },
+    { 18,  6 }, {  6,  4 }, { 12,  5 }, { 21,  6 }, { 25,  6 },
+    /* Amplitude differences - 9 entries */
+    {  1,  2 }, {  3,  3 }, {  4,  4 }, {  5,  5 }, {  6,  6 }, {  7,  7 },
+    {  8,  8 }, {  0,  8 }, {  2,  1 },
+    /* Phase differences - 9 entries */
+    {  2,  2 }, {  1,  2 }, {  3,  4 }, {  7,  4 }, {  6,  5 }, {  5,  6 },
+    {  0,  6 }, {  4,  4 }, {  8,  2 },
 };
 
-static const uint8_t noise_value_symbols[] = {
-    0, 10, 11, 12, 13, 14, 15, 16, 18, 1, 20, 22, 24,
-    26, 28, 2, 30, 32, 34, 36, 3, 4, 5, 6, 7, 8, 9,
+static const uint8_t huff_sizes[] = {
+    27, 12, 28, 47, 9, 9
 };
 
-static const uint16_t noise_value_codes[] = {
-    0xC7A, 0x002, 0x0FA, 0x03A, 0x35A, 0x1C2, 0x07A, 0x1FA,
-    0x17A, 0x000, 0x0DA, 0x142, 0x0C2, 0x042, 0x1DA, 0x001,
-    0x05A, 0x15A, 0x27A, 0x47A, 0x003, 0x005, 0x006, 0x012,
-    0x00A, 0x022, 0x01A,
+static const uint8_t huff_bits[] = {
+    12, 10, 12, 12, 8, 6
 };
-
-static const uint8_t noise_segment_length_bits[] = {
-    10, 8, 5, 1, 2, 4, 4, 4, 6, 7, 9, 10,
-};
-
-static const uint8_t noise_segment_length_symbols[] = {
-    0, 13, 17, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-};
-
-static const uint16_t noise_segment_length_codes[] = {
-    0x30B, 0x8B, 0x1B, 0x0, 0x1, 0x3, 0x7, 0xF, 0x2b, 0x4B, 0xB, 0x10B,
-};
-
-static const uint8_t freq_diff_bits[] = {
-    18, 2, 4, 4, 5, 4, 4, 5, 5, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 6,
-    7, 6, 6, 6, 7, 7, 7, 7, 7, 8, 9, 9, 8, 9, 11, 11, 12, 12, 13, 12,
-    14, 15, 18, 16, 17,
-};
-
-static const uint32_t freq_diff_codes[] = {
-    0x2AD46, 0x1, 0x0, 0x3, 0xC, 0xA, 0x7, 0x18, 0x12, 0xE, 0x4, 0x16,
-    0xF, 0x1C, 0x8, 0x22, 0x26, 0x2, 0x3B, 0x34, 0x74, 0x1F, 0x14, 0x2B,
-    0x1B, 0x3F, 0x28, 0x54, 0x6, 0x4B, 0xB, 0x68, 0xE8, 0x46, 0xC6, 0x1E8,
-    0x146, 0x346, 0x546, 0x746, 0x1D46, 0xF46, 0xD46, 0x6D46, 0xAD46, 0x2D46,
-    0x1AD46,
-};
-
-static const uint8_t amplitude_bits[] = {
-    13, 7, 8, 9, 10, 10, 10, 10, 10, 9, 8, 7, 6,
-    5, 4, 3, 3, 2, 3, 3, 4, 5, 7, 8, 9, 11, 12, 13,
-};
-
-static const uint16_t amplitude_codes[] = {
-    0x1EC6, 0x6, 0xC2, 0x142, 0x242, 0x246, 0xC6, 0x46, 0x42, 0x146, 0xA2,
-    0x62, 0x26, 0x16, 0xE, 0x5, 0x4, 0x3, 0x0, 0x1, 0xA, 0x12, 0x2, 0x22,
-    0x1C6, 0x2C6, 0x6C6, 0xEC6,
-};
-
-static const uint8_t amplitude_diff_bits[] = {
-    8, 2, 1, 3, 4, 5, 6, 7, 8,
-};
-
-static const uint8_t amplitude_diff_codes[] = {
-    0xFE, 0x0, 0x1, 0x2, 0x6, 0xE, 0x1E, 0x3E, 0x7E,
-};
-
-static const uint8_t phase_diff_bits[] = {
-    6, 2, 2, 4, 4, 6, 5, 4, 2,
-};
-
-static const uint8_t phase_diff_codes[] = {
-    0x35, 0x2, 0x0, 0x1, 0xD, 0x15, 0x5, 0x9, 0x3,
-};
-
-#define INIT_VLC_STATIC_LE(vlc, nb_bits, nb_codes,                 \
-                           bits, bits_wrap, bits_size,             \
-                           codes, codes_wrap, codes_size,          \
-                           symbols, symbols_wrap, symbols_size,    \
-                           static_size)                            \
-    do {                                                           \
-        static VLC_TYPE table[static_size][2];                     \
-        (vlc)->table           = table;                            \
-        (vlc)->table_allocated = static_size;                      \
-        ff_init_vlc_sparse(vlc, nb_bits, nb_codes,                 \
-                           bits, bits_wrap, bits_size,             \
-                           codes, codes_wrap, codes_size,          \
-                           symbols, symbols_wrap, symbols_size,    \
-                           INIT_VLC_LE | INIT_VLC_USE_NEW_STATIC); \
-    } while (0)
 
 static av_cold void qdmc_init_static_data(void)
 {
+    const uint8_t (*hufftab)[2] = qdmc_hufftab;
     int i;
 
-    INIT_VLC_STATIC_LE(&vtable[0], 12, FF_ARRAY_ELEMS(noise_value_bits),
-                       noise_value_bits, 1, 1, noise_value_codes, 2, 2, noise_value_symbols, 1, 1, 4096);
-    INIT_VLC_STATIC_LE(&vtable[1], 10, FF_ARRAY_ELEMS(noise_segment_length_bits),
-                       noise_segment_length_bits, 1, 1, noise_segment_length_codes, 2, 2,
-                       noise_segment_length_symbols, 1, 1, 1024);
-    INIT_VLC_STATIC_LE(&vtable[2], 13, FF_ARRAY_ELEMS(amplitude_bits),
-                       amplitude_bits, 1, 1, amplitude_codes, 2, 2, NULL, 0, 0, 8192);
-    INIT_VLC_STATIC_LE(&vtable[3], 18, FF_ARRAY_ELEMS(freq_diff_bits),
-                       freq_diff_bits, 1, 1, freq_diff_codes, 4, 4, NULL, 0, 0, 262144);
-    INIT_VLC_STATIC_LE(&vtable[4], 8, FF_ARRAY_ELEMS(amplitude_diff_bits),
-                       amplitude_diff_bits, 1, 1, amplitude_diff_codes, 1, 1, NULL, 0, 0, 256);
-    INIT_VLC_STATIC_LE(&vtable[5], 6, FF_ARRAY_ELEMS(phase_diff_bits),
-                       phase_diff_bits, 1, 1, phase_diff_codes, 1, 1, NULL, 0, 0, 64);
+    for (unsigned i = 0, offset = 0; i < FF_ARRAY_ELEMS(vtable); i++) {
+        static VLCElem vlc_buffer[13698];
+        vtable[i].table           = &vlc_buffer[offset];
+        vtable[i].table_allocated = FF_ARRAY_ELEMS(vlc_buffer) - offset;
+        ff_init_vlc_from_lengths(&vtable[i], huff_bits[i], huff_sizes[i],
+                                 &hufftab[0][1], 2, &hufftab[0][0], 2, 1, -1,
+                                 INIT_VLC_LE | INIT_VLC_STATIC_OVERLONG, NULL);
+        hufftab += huff_sizes[i];
+        offset  += vtable[i].table_size;
+    }
 
     for (i = 0; i < 512; i++)
         sin_table[i] = sin(2.0f * i * M_PI * 0.001953125f);
@@ -254,6 +210,7 @@ static av_cold int qdmc_decode_init(AVCodecContext *avctx)
     static AVOnce init_static_once = AV_ONCE_INIT;
     QDMCContext *s = avctx->priv_data;
     int ret, fft_size, fft_order, size, g, j, x;
+    float scale = 1.f;
     GetByteContext b;
 
     ff_thread_once(&init_static_once, qdmc_init_static_data);
@@ -292,13 +249,14 @@ static av_cold int qdmc_decode_init(AVCodecContext *avctx)
     }
     bytestream2_skipu(&b, 4);
 
-    avctx->channels = s->nb_channels = bytestream2_get_be32u(&b);
+    s->nb_channels = bytestream2_get_be32u(&b);
     if (s->nb_channels <= 0 || s->nb_channels > 2) {
         av_log(avctx, AV_LOG_ERROR, "invalid number of channels\n");
         return AVERROR_INVALIDDATA;
     }
-    avctx->channel_layout = avctx->channels == 2 ? AV_CH_LAYOUT_STEREO :
-                                                   AV_CH_LAYOUT_MONO;
+    av_channel_layout_uninit(&avctx->ch_layout);
+    avctx->ch_layout = s->nb_channels == 2 ? (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO :
+                                             (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
 
     avctx->sample_rate = bytestream2_get_be32u(&b);
     avctx->bit_rate = bytestream2_get_be32u(&b);
@@ -324,7 +282,7 @@ static av_cold int qdmc_decode_init(AVCodecContext *avctx)
     s->frame_size = 1 << s->frame_bits;
     s->subframe_size = s->frame_size >> 5;
 
-    if (avctx->channels == 2)
+    if (avctx->ch_layout.nb_channels == 2)
         x = 3 * x / 2;
     s->band_index = noise_bands_selector[FFMIN(6, llrint(floor(avctx->bit_rate * 3.0 / (double)x + 0.5)))];
 
@@ -338,7 +296,7 @@ static av_cold int qdmc_decode_init(AVCodecContext *avctx)
         return AVERROR_INVALIDDATA;
     }
 
-    ret = ff_fft_init(&s->fft_ctx, fft_order, 1);
+    ret = av_tx_init(&s->fft_ctx, &s->itx_fn, AV_TX_FLOAT_FFT, 1, 1 << fft_order, &scale, 0);
     if (ret < 0)
         return ret;
 
@@ -358,7 +316,7 @@ static av_cold int qdmc_decode_close(AVCodecContext *avctx)
 {
     QDMCContext *s = avctx->priv_data;
 
-    ff_fft_end(&s->fft_ctx);
+    av_tx_uninit(&s->fft_ctx);
 
     return 0;
 }
@@ -367,12 +325,10 @@ static int qdmc_get_vlc(GetBitContext *gb, VLC *table, int flag)
 {
     int v;
 
-    v = get_vlc2(gb, table->table, table->bits, 1);
-    if (v < 0)
+    if (get_bits_left(gb) < 1)
         return AVERROR_INVALIDDATA;
-    if (v)
-        v = v - 1;
-    else
+    v = get_vlc2(gb, table->table, table->bits, 2);
+    if (v < 0)
         v = get_bits(gb, get_bits(gb, 3) + 1);
 
     if (flag) {
@@ -690,22 +646,21 @@ static int decode_frame(QDMCContext *s, GetBitContext *gb, int16_t *out)
 
         for (ch = 0; ch < s->nb_channels; ch++) {
             for (i = 0; i < s->subframe_size; i++) {
-                s->cmplx[ch][i].re = s->fft_buffer[ch + 2][s->fft_offset + n * s->subframe_size + i];
-                s->cmplx[ch][i].im = s->fft_buffer[ch + 0][s->fft_offset + n * s->subframe_size + i];
-                s->cmplx[ch][s->subframe_size + i].re = 0;
-                s->cmplx[ch][s->subframe_size + i].im = 0;
+                s->cmplx_in[ch][i].re = s->fft_buffer[ch + 2][s->fft_offset + n * s->subframe_size + i];
+                s->cmplx_in[ch][i].im = s->fft_buffer[ch + 0][s->fft_offset + n * s->subframe_size + i];
+                s->cmplx_in[ch][s->subframe_size + i].re = 0;
+                s->cmplx_in[ch][s->subframe_size + i].im = 0;
             }
         }
 
         for (ch = 0; ch < s->nb_channels; ch++) {
-            s->fft_ctx.fft_permute(&s->fft_ctx, s->cmplx[ch]);
-            s->fft_ctx.fft_calc(&s->fft_ctx, s->cmplx[ch]);
+            s->itx_fn(s->fft_ctx, s->cmplx_out[ch], s->cmplx_in[ch], sizeof(float));
         }
 
         r = &s->buffer_ptr[s->nb_channels * n * s->subframe_size];
         for (i = 0; i < 2 * s->subframe_size; i++) {
             for (ch = 0; ch < s->nb_channels; ch++) {
-                *r++ += s->cmplx[ch][i].re;
+                *r++ += s->cmplx_out[ch][i].re;
             }
         }
 
@@ -741,11 +696,10 @@ static av_cold void qdmc_flush(AVCodecContext *avctx)
     s->buffer_offset = 0;
 }
 
-static int qdmc_decode_frame(AVCodecContext *avctx, void *data,
+static int qdmc_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                              int *got_frame_ptr, AVPacket *avpkt)
 {
     QDMCContext *s = avctx->priv_data;
-    AVFrame *frame = data;
     GetBitContext gb;
     int ret;
 
@@ -774,15 +728,16 @@ static int qdmc_decode_frame(AVCodecContext *avctx, void *data,
     return ret;
 }
 
-AVCodec ff_qdmc_decoder = {
-    .name             = "qdmc",
-    .long_name        = NULL_IF_CONFIG_SMALL("QDesign Music Codec 1"),
-    .type             = AVMEDIA_TYPE_AUDIO,
-    .id               = AV_CODEC_ID_QDMC,
+const FFCodec ff_qdmc_decoder = {
+    .p.name           = "qdmc",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("QDesign Music Codec 1"),
+    .p.type           = AVMEDIA_TYPE_AUDIO,
+    .p.id             = AV_CODEC_ID_QDMC,
     .priv_data_size   = sizeof(QDMCContext),
     .init             = qdmc_decode_init,
     .close            = qdmc_decode_close,
-    .decode           = qdmc_decode_frame,
+    FF_CODEC_DECODE_CB(qdmc_decode_frame),
     .flush            = qdmc_flush,
-    .capabilities     = AV_CODEC_CAP_DR1,
+    .p.capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE,
 };

@@ -29,7 +29,6 @@
 #include "libavutil/dict.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
-#include "libavutil/mem.h"
 #include "libavutil/replaygain.h"
 
 #include "avformat.h"
@@ -61,7 +60,7 @@ static int32_t parse_value(const char *value, int32_t min)
         }
     }
 
-    if (abs(db) > (INT32_MAX - mb) / 100000)
+    if (llabs(db) > (INT32_MAX - mb) / 100000)
         return min;
 
     return db * 100000 + sign * mb;

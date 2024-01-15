@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/pixdesc.h"
@@ -49,31 +51,27 @@ typedef struct NContext {
                    int maxc);
 } NContext;
 
-static int query_formats(AVFilterContext *ctx)
-{
-    static const enum AVPixelFormat pix_fmts[] = {
-        AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV440P,
-        AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUVJ440P,
-        AV_PIX_FMT_YUVA422P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUVA420P, AV_PIX_FMT_YUV420P,
-        AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ420P,
-        AV_PIX_FMT_YUVJ411P, AV_PIX_FMT_YUV411P, AV_PIX_FMT_YUV410P,
-        AV_PIX_FMT_YUV420P9, AV_PIX_FMT_YUV422P9, AV_PIX_FMT_YUV444P9,
-        AV_PIX_FMT_YUV420P10, AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUV444P10,
-        AV_PIX_FMT_YUV420P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV440P12,
-        AV_PIX_FMT_YUV420P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV444P14,
-        AV_PIX_FMT_YUV420P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV444P16,
-        AV_PIX_FMT_YUVA420P9, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA444P9,
-        AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
-        AV_PIX_FMT_YUVA420P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA444P16,
-        AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
-        AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
-        AV_PIX_FMT_GBRAP, AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP12, AV_PIX_FMT_GBRAP16,
-        AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9, AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
-        AV_PIX_FMT_NONE
-    };
-
-    return ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
-}
+static const enum AVPixelFormat pix_fmts[] = {
+    AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV440P,
+    AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_YUVJ440P,
+    AV_PIX_FMT_YUVA422P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUVA420P, AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ420P,
+    AV_PIX_FMT_YUVJ411P, AV_PIX_FMT_YUV411P, AV_PIX_FMT_YUV410P,
+    AV_PIX_FMT_YUV420P9, AV_PIX_FMT_YUV422P9, AV_PIX_FMT_YUV444P9,
+    AV_PIX_FMT_YUV420P10, AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUV444P10,
+    AV_PIX_FMT_YUV420P12, AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV440P12,
+    AV_PIX_FMT_YUV420P14, AV_PIX_FMT_YUV422P14, AV_PIX_FMT_YUV444P14,
+    AV_PIX_FMT_YUV420P16, AV_PIX_FMT_YUV422P16, AV_PIX_FMT_YUV444P16,
+    AV_PIX_FMT_YUVA420P9, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA444P9,
+    AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
+    AV_PIX_FMT_YUVA422P12, AV_PIX_FMT_YUVA444P12,
+    AV_PIX_FMT_YUVA420P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA444P16,
+    AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10,
+    AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
+    AV_PIX_FMT_GBRAP, AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP12, AV_PIX_FMT_GBRAP16,
+    AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9, AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
+    AV_PIX_FMT_NONE
+};
 
 static void erosion(uint8_t *dst, const uint8_t *p1, int width,
                     int threshold, const uint8_t *coordinates[], int coord,
@@ -296,9 +294,11 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
                                                src + (width - 2) * bpc,                                                      src + (width - 2) * bpc,
                                                src + (width - 2) * bpc + ph * stride, src + (width - 1) * bpc + ph * stride, src + (width - 2) * bpc + ph * stride};
 
-            s->filter(dst,                     src,                     1,         threshold, coordinateslb, s->coordinates, s->max);
-            s->filter(dst          + 1  * bpc, src          + 1  * bpc, width - 2, threshold, coordinates,   s->coordinates, s->max);
-            s->filter(dst + (width - 1) * bpc, src + (width - 1) * bpc, 1,         threshold, coordinatesrb, s->coordinates, s->max);
+            s->filter(dst,                         src,                     1,         threshold, coordinateslb, s->coordinates, s->max);
+            if (width > 1) {
+                s->filter(dst          + 1  * bpc, src          + 1  * bpc, width - 2, threshold, coordinates,   s->coordinates, s->max);
+                s->filter(dst + (width - 1) * bpc, src + (width - 1) * bpc, 1,         threshold, coordinatesrb, s->coordinates, s->max);
+            }
 
             src += stride;
             dst += dstride;
@@ -325,7 +325,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
     td.in = in;
     td.out = out;
-    ctx->internal->execute(ctx, filter_slice, &td, NULL, FFMIN(s->planeheight[1], ff_filter_get_nb_threads(ctx)));
+    ff_filter_execute(ctx, filter_slice, &td, NULL,
+                      FFMIN(s->planeheight[1], ff_filter_get_nb_threads(ctx)));
 
     av_frame_free(&in);
     return ff_filter_frame(outlink, out);
@@ -338,7 +339,6 @@ static const AVFilterPad neighbor_inputs[] = {
         .filter_frame = filter_frame,
         .config_props = config_input,
     },
-    { NULL }
 };
 
 static const AVFilterPad neighbor_outputs[] = {
@@ -346,81 +346,64 @@ static const AVFilterPad neighbor_outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
 #define OFFSET(x) offsetof(NContext, x)
-#define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
+#define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
-#define DEFINE_NEIGHBOR_FILTER(name_, description_)          \
-AVFILTER_DEFINE_CLASS(name_);                                \
-                                                             \
-AVFilter ff_vf_##name_ = {                                   \
+#define DEFINE_NEIGHBOR_FILTER(name_, description_, priv_class_) \
+const AVFilter ff_vf_##name_ = {                                   \
     .name          = #name_,                                 \
     .description   = NULL_IF_CONFIG_SMALL(description_),     \
+    .priv_class    = &priv_class_##_class,                   \
     .priv_size     = sizeof(NContext),                       \
-    .priv_class    = &name_##_class,                         \
-    .query_formats = query_formats,                          \
-    .inputs        = neighbor_inputs,                        \
-    .outputs       = neighbor_outputs,                       \
+    FILTER_INPUTS(neighbor_inputs),                          \
+    FILTER_OUTPUTS(neighbor_outputs),                        \
+    FILTER_PIXFMTS_ARRAY(pix_fmts),                          \
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC| \
                      AVFILTER_FLAG_SLICE_THREADS,            \
+    .process_command = ff_filter_process_command,            \
 }
 
-#if CONFIG_EROSION_FILTER
-
-static const AVOption erosion_options[] = {
+/* The following options are shared between all filters here;
+ * the de/inflate filters only use the threshold* options. */
+#define DEINFLATE_OPTIONS_OFFSET (CONFIG_EROSION_FILTER || CONFIG_DILATION_FILTER)
+static const AVOption options[] = {
+#if CONFIG_EROSION_FILTER || CONFIG_DILATION_FILTER
+    { "coordinates", "set coordinates",               OFFSET(coordinates),    AV_OPT_TYPE_INT, {.i64=255},   0, 255,   FLAGS },
+#endif
     { "threshold0",  "set threshold for 1st plane",   OFFSET(threshold[0]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
     { "threshold1",  "set threshold for 2nd plane",   OFFSET(threshold[1]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
     { "threshold2",  "set threshold for 3rd plane",   OFFSET(threshold[2]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
     { "threshold3",  "set threshold for 4th plane",   OFFSET(threshold[3]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "coordinates", "set coordinates",               OFFSET(coordinates),    AV_OPT_TYPE_INT, {.i64=255},   0, 255,   FLAGS },
     { NULL }
 };
 
-DEFINE_NEIGHBOR_FILTER(erosion, "Apply erosion effect.");
+AVFILTER_DEFINE_CLASS_EXT(erosion_dilation, "erosion/dilation", options);
+
+#if CONFIG_EROSION_FILTER
+
+DEFINE_NEIGHBOR_FILTER(erosion, "Apply erosion effect.", erosion_dilation);
 
 #endif /* CONFIG_EROSION_FILTER */
 
 #if CONFIG_DILATION_FILTER
 
-static const AVOption dilation_options[] = {
-    { "threshold0",  "set threshold for 1st plane",   OFFSET(threshold[0]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold1",  "set threshold for 2nd plane",   OFFSET(threshold[1]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold2",  "set threshold for 3rd plane",   OFFSET(threshold[2]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold3",  "set threshold for 4th plane",   OFFSET(threshold[3]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "coordinates", "set coordinates",               OFFSET(coordinates),    AV_OPT_TYPE_INT, {.i64=255},   0, 255,   FLAGS },
-    { NULL }
-};
-
-DEFINE_NEIGHBOR_FILTER(dilation, "Apply dilation effect.");
+DEFINE_NEIGHBOR_FILTER(dilation, "Apply dilation effect.", erosion_dilation);
 
 #endif /* CONFIG_DILATION_FILTER */
 
+AVFILTER_DEFINE_CLASS_EXT(deflate_inflate, "deflate/inflate",
+                          &options[DEINFLATE_OPTIONS_OFFSET]);
+
 #if CONFIG_DEFLATE_FILTER
 
-static const AVOption deflate_options[] = {
-    { "threshold0", "set threshold for 1st plane",   OFFSET(threshold[0]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold1", "set threshold for 2nd plane",   OFFSET(threshold[1]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold2", "set threshold for 3rd plane",   OFFSET(threshold[2]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold3", "set threshold for 4th plane",   OFFSET(threshold[3]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { NULL }
-};
-
-DEFINE_NEIGHBOR_FILTER(deflate, "Apply deflate effect.");
+DEFINE_NEIGHBOR_FILTER(deflate, "Apply deflate effect.", deflate_inflate);
 
 #endif /* CONFIG_DEFLATE_FILTER */
 
 #if CONFIG_INFLATE_FILTER
 
-static const AVOption inflate_options[] = {
-    { "threshold0", "set threshold for 1st plane",   OFFSET(threshold[0]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold1", "set threshold for 2nd plane",   OFFSET(threshold[1]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold2", "set threshold for 3rd plane",   OFFSET(threshold[2]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { "threshold3", "set threshold for 4th plane",   OFFSET(threshold[3]),   AV_OPT_TYPE_INT, {.i64=65535}, 0, 65535, FLAGS },
-    { NULL }
-};
-
-DEFINE_NEIGHBOR_FILTER(inflate, "Apply inflate effect.");
+DEFINE_NEIGHBOR_FILTER(inflate, "Apply inflate effect.", deflate_inflate);
 
 #endif /* CONFIG_INFLATE_FILTER */

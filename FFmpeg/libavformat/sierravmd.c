@@ -38,10 +38,9 @@
 
 typedef struct vmd_frame {
   int stream_index;
-  int64_t frame_offset;
   unsigned int frame_size;
+  int64_t frame_offset;
   int64_t pts;
-  int keyframe;
   unsigned char frame_record[BYTES_PER_FRAME_RECORD];
 } vmd_frame;
 
@@ -127,14 +126,15 @@ static int vmd_read_header(AVFormatContext *s)
             vst->codecpar->width >>= 1;
             vst->codecpar->height >>= 1;
         }
-        if (ff_alloc_extradata(vst->codecpar, VMD_HEADER_SIZE))
-            return AVERROR(ENOMEM);
+        if ((ret = ff_alloc_extradata(vst->codecpar, VMD_HEADER_SIZE)) < 0)
+            return ret;
         memcpy(vst->codecpar->extradata, vmd->vmd_header, VMD_HEADER_SIZE);
     }
 
     /* if sample rate is 0, assume no audio */
     vmd->sample_rate = AV_RL16(&vmd->vmd_header[804]);
     if (vmd->sample_rate) {
+        int channels;
         st = avformat_new_stream(s, NULL);
         if (!st)
             return AVERROR(ENOMEM);
@@ -151,29 +151,29 @@ static int vmd_read_header(AVFormatContext *s)
             st->codecpar->bits_per_coded_sample = 8;
         }
         if (vmd->vmd_header[811] & 0x80) {
-            st->codecpar->channels       = 2;
-            st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
+            channels = 2;
         } else if (vmd->vmd_header[811] & 0x2) {
             /* Shivers 2 stereo audio */
             /* Frame length is for 1 channel */
-            st->codecpar->channels       = 2;
-            st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
+            channels        = 2;
             st->codecpar->block_align = st->codecpar->block_align << 1;
         } else {
-            st->codecpar->channels       = 1;
-            st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+            channels = 1;
         }
+        av_channel_layout_default(&st->codecpar->ch_layout, channels);
         st->codecpar->bit_rate = st->codecpar->sample_rate *
-            st->codecpar->bits_per_coded_sample * st->codecpar->channels;
+            st->codecpar->bits_per_coded_sample * channels;
 
         /* calculate pts */
         num = st->codecpar->block_align;
-        den = st->codecpar->sample_rate * st->codecpar->channels;
+        den = st->codecpar->sample_rate * channels;
         av_reduce(&num, &den, num, den, (1UL<<31)-1);
         if (vst)
             avpriv_set_pts_info(vst, 33, num, den);
         avpriv_set_pts_info(st, 33, num, den);
     }
+    if (!s->nb_streams)
+        return AVERROR_INVALIDDATA;
 
     toc_offset = AV_RL32(&vmd->vmd_header[812]);
     vmd->frame_count = AV_RL16(&vmd->vmd_header[6]);
@@ -184,10 +184,6 @@ static int vmd_read_header(AVFormatContext *s)
     vmd->frame_table = NULL;
     sound_buffers = AV_RL16(&vmd->vmd_header[808]);
     raw_frame_table_size = vmd->frame_count * 6;
-    if(vmd->frame_count * vmd->frames_per_block >= UINT_MAX / sizeof(vmd_frame) - sound_buffers){
-        av_log(s, AV_LOG_ERROR, "vmd->frame_count * vmd->frames_per_block too large\n");
-        return -1;
-    }
     raw_frame_table = av_malloc(raw_frame_table_size);
     vmd->frame_table = av_malloc_array(vmd->frame_count * vmd->frames_per_block + sound_buffers, sizeof(vmd_frame));
     if (!raw_frame_table || !vmd->frame_table) {
@@ -241,6 +237,8 @@ static int vmd_read_header(AVFormatContext *s)
                     current_audio_pts++;
                 break;
             case 2: /* Video Chunk */
+                if (!vst)
+                    break;
                 vmd->frame_table[total_frames].frame_offset = current_offset;
                 vmd->frame_table[total_frames].stream_index = vmd->video_stream_index;
                 vmd->frame_table[total_frames].frame_size = size;
@@ -253,16 +251,13 @@ static int vmd_read_header(AVFormatContext *s)
         }
     }
 
-    av_free(raw_frame_table);
 
     vmd->current_frame = 0;
     vmd->frame_count = total_frames;
 
-    return 0;
-
+    ret = 0;
 error:
     av_freep(&raw_frame_table);
-    av_freep(&vmd->frame_table);
     return ret;
 }
 
@@ -283,8 +278,9 @@ static int vmd_read_packet(AVFormatContext *s,
 
     if(ffio_limit(pb, frame->frame_size) != frame->frame_size)
         return AVERROR(EIO);
-    if (av_new_packet(pkt, frame->frame_size + BYTES_PER_FRAME_RECORD))
-        return AVERROR(ENOMEM);
+    ret = av_new_packet(pkt, frame->frame_size + BYTES_PER_FRAME_RECORD);
+    if (ret < 0)
+        return ret;
     pkt->pos= avio_tell(pb);
     memcpy(pkt->data, frame->frame_record, BYTES_PER_FRAME_RECORD);
     if(vmd->is_indeo3 && frame->frame_record[0] == 0x02)
@@ -294,7 +290,6 @@ static int vmd_read_packet(AVFormatContext *s,
             frame->frame_size);
 
     if (ret != frame->frame_size) {
-        av_packet_unref(pkt);
         ret = AVERROR(EIO);
     }
     pkt->stream_index = frame->stream_index;
@@ -318,10 +313,11 @@ static int vmd_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_vmd_demuxer = {
+const AVInputFormat ff_vmd_demuxer = {
     .name           = "vmd",
     .long_name      = NULL_IF_CONFIG_SMALL("Sierra VMD"),
     .priv_data_size = sizeof(VmdDemuxContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = vmd_probe,
     .read_header    = vmd_read_header,
     .read_packet    = vmd_read_packet,

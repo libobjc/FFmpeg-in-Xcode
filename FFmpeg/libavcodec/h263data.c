@@ -26,9 +26,7 @@
 #include <stdint.h>
 
 #include "h263data.h"
-#include "mpegvideo.h"
-
-uint8_t ff_h263_static_rl_table_store[2][2][2 * MAX_RUN + MAX_LEVEL + 3];
+#include "rl.h"
 
 /* intra MCBPC, mb_type = (intra), then (intraq) */
 const uint8_t ff_h263_intra_MCBPC_code[9] = { 1, 1, 2, 3, 1, 1, 2, 3, 1 };

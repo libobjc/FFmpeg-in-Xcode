@@ -94,16 +94,17 @@ typedef struct ThreadData {
 
 #define OFFSET(x) offsetof(RotContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
+#define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption rotate_options[] = {
-    { "angle",     "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "a",         "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "out_w",     "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "ow",        "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "out_h",     "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "oh",        "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "fillcolor", "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "c",         "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
+    { "angle",     "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, 0, 0, .flags=TFLAGS },
+    { "a",         "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, 0, 0, .flags=TFLAGS },
+    { "out_w",     "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, 0, 0, .flags=FLAGS },
+    { "ow",        "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, 0, 0, .flags=FLAGS },
+    { "out_h",     "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, 0, 0, .flags=FLAGS },
+    { "oh",        "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, 0, 0, .flags=FLAGS },
+    { "fillcolor", "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, 0, 0, .flags=FLAGS },
+    { "c",         "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, 0, 0, .flags=FLAGS },
     { "bilinear",  "use bilinear interpolation",   OFFSET(use_bilinear),  AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, .flags=FLAGS },
     { NULL }
 };
@@ -131,36 +132,28 @@ static av_cold void uninit(AVFilterContext *ctx)
     rot->angle_expr = NULL;
 }
 
-static int query_formats(AVFilterContext *ctx)
-{
-    static const enum AVPixelFormat pix_fmts[] = {
-        AV_PIX_FMT_GBRP,   AV_PIX_FMT_GBRAP,
-        AV_PIX_FMT_ARGB,   AV_PIX_FMT_RGBA,
-        AV_PIX_FMT_ABGR,   AV_PIX_FMT_BGRA,
-        AV_PIX_FMT_0RGB,   AV_PIX_FMT_RGB0,
-        AV_PIX_FMT_0BGR,   AV_PIX_FMT_BGR0,
-        AV_PIX_FMT_RGB24,  AV_PIX_FMT_BGR24,
-        AV_PIX_FMT_GRAY8,
-        AV_PIX_FMT_YUV410P,
-        AV_PIX_FMT_YUV444P,  AV_PIX_FMT_YUVJ444P,
-        AV_PIX_FMT_YUV420P,  AV_PIX_FMT_YUVJ420P,
-        AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUVA420P,
-        AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUVA420P10LE,
-        AV_PIX_FMT_YUV444P10LE, AV_PIX_FMT_YUVA444P10LE,
-        AV_PIX_FMT_YUV420P12LE,
-        AV_PIX_FMT_YUV444P12LE,
-        AV_PIX_FMT_YUV444P16LE, AV_PIX_FMT_YUVA444P16LE,
-        AV_PIX_FMT_YUV420P16LE, AV_PIX_FMT_YUVA420P16LE,
-        AV_PIX_FMT_YUV444P9LE, AV_PIX_FMT_YUVA444P9LE,
-        AV_PIX_FMT_YUV420P9LE, AV_PIX_FMT_YUVA420P9LE,
-        AV_PIX_FMT_NONE
-    };
-
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
-}
+static const enum AVPixelFormat pix_fmts[] = {
+    AV_PIX_FMT_GBRP,   AV_PIX_FMT_GBRAP,
+    AV_PIX_FMT_ARGB,   AV_PIX_FMT_RGBA,
+    AV_PIX_FMT_ABGR,   AV_PIX_FMT_BGRA,
+    AV_PIX_FMT_0RGB,   AV_PIX_FMT_RGB0,
+    AV_PIX_FMT_0BGR,   AV_PIX_FMT_BGR0,
+    AV_PIX_FMT_RGB24,  AV_PIX_FMT_BGR24,
+    AV_PIX_FMT_GRAY8,
+    AV_PIX_FMT_YUV410P,
+    AV_PIX_FMT_YUV444P,  AV_PIX_FMT_YUVJ444P,
+    AV_PIX_FMT_YUV420P,  AV_PIX_FMT_YUVJ420P,
+    AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUVA420P,
+    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUVA420P10LE,
+    AV_PIX_FMT_YUV444P10LE, AV_PIX_FMT_YUVA444P10LE,
+    AV_PIX_FMT_YUV420P12LE,
+    AV_PIX_FMT_YUV444P12LE,
+    AV_PIX_FMT_YUV444P16LE, AV_PIX_FMT_YUVA444P16LE,
+    AV_PIX_FMT_YUV420P16LE, AV_PIX_FMT_YUVA420P16LE,
+    AV_PIX_FMT_YUV444P9LE, AV_PIX_FMT_YUVA444P9LE,
+    AV_PIX_FMT_YUV420P9LE, AV_PIX_FMT_YUVA420P9LE,
+    AV_PIX_FMT_NONE
+};
 
 static double get_rotated_w(void *opaque, double angle)
 {
@@ -414,8 +407,6 @@ static av_always_inline void simple_rotate(uint8_t *dst, const uint8_t *src, int
     }
 }
 
-#define TS2T(ts, tb) ((ts) == AV_NOPTS_VALUE ? NAN : (double)(ts)*av_q2d(tb))
-
 static int filter_slice(AVFilterContext *ctx, void *arg, int job, int nb_jobs)
 {
     ThreadData *td = arg;
@@ -552,8 +543,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                           .yprime = -(outh-1) * c / 2,
                           .plane = plane, .c = c, .s = s };
 
-
-        ctx->internal->execute(ctx, filter_slice, &td, NULL, FFMIN(outh, ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, filter_slice, &td, NULL,
+                          FFMIN(outh, ff_filter_get_nb_threads(ctx)));
     }
 
     av_frame_free(&in);
@@ -589,7 +580,6 @@ static const AVFilterPad rotate_inputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad rotate_outputs[] = {
@@ -598,19 +588,18 @@ static const AVFilterPad rotate_outputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .config_props = config_props,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_rotate = {
+const AVFilter ff_vf_rotate = {
     .name          = "rotate",
     .description   = NULL_IF_CONFIG_SMALL("Rotate the input image."),
     .priv_size     = sizeof(RotContext),
     .init          = init,
     .uninit        = uninit,
-    .query_formats = query_formats,
     .process_command = process_command,
-    .inputs        = rotate_inputs,
-    .outputs       = rotate_outputs,
+    FILTER_INPUTS(rotate_inputs),
+    FILTER_OUTPUTS(rotate_outputs),
+    FILTER_PIXFMTS_ARRAY(pix_fmts),
     .priv_class    = &rotate_class,
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
 };

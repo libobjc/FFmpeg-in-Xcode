@@ -37,15 +37,13 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
+#include <stdio.h>
 #include "config.h"
 #include "attributes.h"
 #include "timer.h"
-#include "cpu.h"
 #include "dict.h"
 #include "macros.h"
-#include "mem.h"
 #include "pixfmt.h"
-#include "version.h"
 
 #if ARCH_X86
 #   include "x86/emms.h"
@@ -88,14 +86,6 @@
 
 #define FF_MEMORY_POISON 0x2a
 
-#define MAKE_ACCESSORS(str, name, type, field) \
-    type av_##name##_get_##field(const str *s) { return s->field; } \
-    void av_##name##_set_##field(str *s, type v) { s->field = v; }
-
-// Some broken preprocessors need a second expansion
-// to be forced to tokenize __VA_ARGS__
-#define E1(x) x
-
 /* Check if the hard coded offset of a struct member still matches reality.
  * Induce a compilation failure if not.
  */
@@ -103,75 +93,16 @@
         int x_##o[offsetof(s, m) == o? 1: -1];         \
     }
 
-#define LOCAL_ALIGNED_A(a, t, v, s, o, ...)             \
-    uint8_t la_##v[sizeof(t s o) + (a)];                \
-    t (*v) o = (void *)FFALIGN((uintptr_t)la_##v, a)
 
-#define LOCAL_ALIGNED_D(a, t, v, s, o, ...)             \
-    DECLARE_ALIGNED(a, t, la_##v) s o;                  \
-    t (*v) o = la_##v
+#define FF_ALLOC_TYPED_ARRAY(p, nelem)  (p = av_malloc_array(nelem, sizeof(*p)))
+#define FF_ALLOCZ_TYPED_ARRAY(p, nelem) (p = av_calloc(nelem, sizeof(*p)))
 
-#define LOCAL_ALIGNED(a, t, v, ...) LOCAL_ALIGNED_##a(t, v, __VA_ARGS__)
+#define FF_PTR_ADD(ptr, off) ((off) ? (ptr) + (off) : (ptr))
 
-#if HAVE_LOCAL_ALIGNED
-#   define LOCAL_ALIGNED_4(t, v, ...) E1(LOCAL_ALIGNED_D(4, t, v, __VA_ARGS__,,))
-#else
-#   define LOCAL_ALIGNED_4(t, v, ...) E1(LOCAL_ALIGNED_A(4, t, v, __VA_ARGS__,,))
-#endif
-
-#if HAVE_LOCAL_ALIGNED
-#   define LOCAL_ALIGNED_8(t, v, ...) E1(LOCAL_ALIGNED_D(8, t, v, __VA_ARGS__,,))
-#else
-#   define LOCAL_ALIGNED_8(t, v, ...) E1(LOCAL_ALIGNED_A(8, t, v, __VA_ARGS__,,))
-#endif
-
-#if HAVE_LOCAL_ALIGNED
-#   define LOCAL_ALIGNED_16(t, v, ...) E1(LOCAL_ALIGNED_D(16, t, v, __VA_ARGS__,,))
-#else
-#   define LOCAL_ALIGNED_16(t, v, ...) E1(LOCAL_ALIGNED_A(16, t, v, __VA_ARGS__,,))
-#endif
-
-#if HAVE_LOCAL_ALIGNED
-#   define LOCAL_ALIGNED_32(t, v, ...) E1(LOCAL_ALIGNED_D(32, t, v, __VA_ARGS__,,))
-#else
-#   define LOCAL_ALIGNED_32(t, v, ...) E1(LOCAL_ALIGNED_A(32, t, v, __VA_ARGS__,,))
-#endif
-
-#define FF_ALLOC_OR_GOTO(ctx, p, size, label)\
-{\
-    p = av_malloc(size);\
-    if (!(p) && (size) != 0) {\
-        av_log(ctx, AV_LOG_ERROR, "Cannot allocate memory.\n");\
-        goto label;\
-    }\
-}
-
-#define FF_ALLOCZ_OR_GOTO(ctx, p, size, label)\
-{\
-    p = av_mallocz(size);\
-    if (!(p) && (size) != 0) {\
-        av_log(ctx, AV_LOG_ERROR, "Cannot allocate memory.\n");\
-        goto label;\
-    }\
-}
-
-#define FF_ALLOC_ARRAY_OR_GOTO(ctx, p, nelem, elsize, label)\
-{\
-    p = av_malloc_array(nelem, elsize);\
-    if (!p) {\
-        av_log(ctx, AV_LOG_ERROR, "Cannot allocate memory.\n");\
-        goto label;\
-    }\
-}
-
-#define FF_ALLOCZ_ARRAY_OR_GOTO(ctx, p, nelem, elsize, label)\
-{\
-    p = av_mallocz_array(nelem, elsize);\
-    if (!p) {\
-        av_log(ctx, AV_LOG_ERROR, "Cannot allocate memory.\n");\
-        goto label;\
-    }\
-}
+/**
+ * Access a field in a structure by its offset.
+ */
+#define FF_FIELD_AT(type, off, obj) (*(type *)((char *)&(obj) + (off)))
 
 #include "libm.h"
 
@@ -253,8 +184,10 @@ void avpriv_request_sample(void *avc,
 #pragma comment(linker, "/include:" EXTERN_PREFIX "avpriv_snprintf")
 #endif
 
+#define avpriv_fopen_utf8 ff_fopen_utf8
 #define avpriv_open ff_open
 #define avpriv_tempfile ff_tempfile
+
 #define PTRDIFF_SPECIFIER "Id"
 #define SIZE_SPECIFIER "Iu"
 #else
@@ -266,6 +199,12 @@ void avpriv_request_sample(void *avc,
 #   define ff_dlog(ctx, ...) av_log(ctx, AV_LOG_DEBUG, __VA_ARGS__)
 #else
 #   define ff_dlog(ctx, ...) do { if (0) av_log(ctx, AV_LOG_DEBUG, __VA_ARGS__); } while (0)
+#endif
+
+#ifdef TRACE
+#   define ff_tlog(ctx, ...) av_log(ctx, AV_LOG_TRACE, __VA_ARGS__)
+#else
+#   define ff_tlog(ctx, ...) do { } while(0)
 #endif
 
 // For debuging we use signed operations so overflows can be detected (by ubsan)
@@ -321,6 +260,11 @@ av_warn_unused_result
 int avpriv_open(const char *filename, int flags, ...);
 
 /**
+ * Open a file using a UTF-8 filename.
+ */
+FILE *avpriv_fopen_utf8(const char *path, const char *mode);
+
+/**
  * Wrapper to work around the lack of mkstemp() on mingw.
  * Also, tries to create file in /tmp first, if possible.
  * *prefix can be a character constant; *filename will be allocated internally.
@@ -353,20 +297,12 @@ void ff_check_pixfmt_descriptors(void);
 /**
  * Set a dictionary value to an ISO-8601 compliant timestamp string.
  *
- * @param s AVFormatContext
+ * @param dict pointer to a pointer to a dictionary struct. If *dict is NULL
+ *             a dictionary struct is allocated and put in *dict.
  * @param key metadata key
  * @param timestamp unix timestamp in microseconds
  * @return <0 on error
  */
 int avpriv_dict_set_timestamp(AVDictionary **dict, const char *key, int64_t timestamp);
-
-// Helper macro for AV_PIX_FMT_FLAG_PSEUDOPAL deprecation. Code inside FFmpeg
-// should always use FF_PSEUDOPAL. Once the public API flag gets removed, all
-// code using it is dead code.
-#if FF_API_PSEUDOPAL
-#define FF_PSEUDOPAL AV_PIX_FMT_FLAG_PSEUDOPAL
-#else
-#define FF_PSEUDOPAL 0
-#endif
 
 #endif /* AVUTIL_INTERNAL_H */

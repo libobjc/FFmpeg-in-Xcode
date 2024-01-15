@@ -19,12 +19,20 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/channel_layout.h"
+#include "libavutil/thread.h"
+
+#include "codec_internal.h"
 #include "internal.h"
 #include "get_bits.h"
 #include "fft.h"
 #include "atrac9tab.h"
 #include "libavutil/lfg.h"
 #include "libavutil/float_dsp.h"
+#include "libavutil/mem_internal.h"
+
+#define ATRAC9_SF_VLC_BITS 8
+#define ATRAC9_COEFF_VLC_BITS 9
 
 typedef struct ATRAC9ChannelData {
     int band_ext;
@@ -90,13 +98,14 @@ typedef struct ATRAC9Context {
     const ATRAC9BlockConfig *block_config;
 
     /* Generated on init */
-    VLC sf_vlc[2][8];            /* Signed/unsigned, length */
-    VLC coeff_vlc[2][8][4];      /* Cookbook, precision, cookbook index */
     uint8_t alloc_curve[48][48];
     DECLARE_ALIGNED(32, float, imdct_win)[256];
 
     DECLARE_ALIGNED(32, float, temp)[256];
 } ATRAC9Context;
+
+static VLC sf_vlc[2][8];            /* Signed/unsigned, length */
+static VLC coeff_vlc[2][8][4];      /* Cookbook, precision, cookbook index */
 
 static inline int parse_gradient(ATRAC9Context *s, ATRAC9BlockData *b,
                                  GetBitContext *gb)
@@ -122,9 +131,6 @@ static inline int parse_gradient(ATRAC9Context *s, ATRAC9BlockData *b,
     b->grad_boundary = get_bits(gb, 4);
 
     if (grad_range[0] >= grad_range[1] || grad_range[1] > 31)
-        return AVERROR_INVALIDDATA;
-
-    if (grad_value[0] > 31 || grad_value[1] > 31)
         return AVERROR_INVALIDDATA;
 
     if (b->grad_boundary > b->q_unit_cnt)
@@ -190,7 +196,7 @@ static inline void calc_precision(ATRAC9Context *s, ATRAC9BlockData *b,
     for (int i = 0; i < b->q_unit_cnt; i++) {
         c->precision_fine[i] = 0;
         if (c->precision_coarse[i] > 15) {
-            c->precision_fine[i] = c->precision_coarse[i] - 15;
+            c->precision_fine[i] = FFMIN(c->precision_coarse[i], 30) - 15;
             c->precision_coarse[i] = 15;
         }
     }
@@ -202,7 +208,7 @@ static inline int parse_band_ext(ATRAC9Context *s, ATRAC9BlockData *b,
     int ext_band = 0;
 
     if (b->has_band_ext) {
-        if (b->q_unit_cnt < 13)
+        if (b->q_unit_cnt < 13 || b->q_unit_cnt > 20)
             return AVERROR_INVALIDDATA;
         ext_band = at9_tab_band_ext_group[b->q_unit_cnt - 13][2];
         if (stereo) {
@@ -226,8 +232,18 @@ static inline int parse_band_ext(ATRAC9Context *s, ATRAC9BlockData *b,
     b->channel[0].band_ext = get_bits(gb, 2);
     b->channel[0].band_ext = ext_band > 2 ? b->channel[0].band_ext : 4;
 
-    if (!get_bits(gb, 5))
+    if (!get_bits(gb, 5)) {
+        for (int i = 0; i <= stereo; i++) {
+            ATRAC9ChannelData *c = &b->channel[i];
+            const int count = at9_tab_band_ext_cnt[c->band_ext][ext_band];
+            for (int j = 0; j < count; j++) {
+                int len = at9_tab_band_ext_lengths[c->band_ext][ext_band][j];
+                c->band_ext_data[j] = av_clip_uintp2_c(c->band_ext_data[j], len);
+            }
+        }
+
         return 0;
+    }
 
     for (int i = 0; i <= stereo; i++) {
         ATRAC9ChannelData *c = &b->channel[i];
@@ -260,12 +276,13 @@ static inline int read_scalefactors(ATRAC9Context *s, ATRAC9BlockData *b,
         const uint8_t *sf_weights = at9_tab_sf_weights[get_bits(gb, 3)];
         const int base = get_bits(gb, 5);
         const int len = get_bits(gb, 2) + 3;
-        const VLC *tab = &s->sf_vlc[0][len];
+        const VLC *tab = &sf_vlc[0][len];
 
         c->scalefactors[0] = get_bits(gb, len);
 
         for (int i = 1; i < b->band_ext_q_unit; i++) {
-            int val = c->scalefactors[i - 1] + get_vlc2(gb, tab->table, 9, 2);
+            int val = c->scalefactors[i - 1] + get_vlc2(gb, tab->table,
+                                                        ATRAC9_SF_VLC_BITS, 1);
             c->scalefactors[i] = val & ((1 << len) - 1);
         }
 
@@ -292,10 +309,10 @@ static inline int read_scalefactors(ATRAC9Context *s, ATRAC9BlockData *b,
 
         const int len = get_bits(gb, 2) + 2;
         const int unit_cnt = FFMIN(b->band_ext_q_unit, baseline_len);
-        const VLC *tab = &s->sf_vlc[1][len];
+        const VLC *tab = &sf_vlc[1][len];
 
         for (int i = 0; i < unit_cnt; i++) {
-            int dist = get_vlc2(gb, tab->table, 9, 2);
+            int dist = get_vlc2(gb, tab->table, ATRAC9_SF_VLC_BITS, 1);
             c->scalefactors[i] = baseline[i] + dist;
         }
 
@@ -313,12 +330,13 @@ static inline int read_scalefactors(ATRAC9Context *s, ATRAC9BlockData *b,
         const int base = get_bits(gb, 5) - (1 << (5 - 1));
         const int len = get_bits(gb, 2) + 1;
         const int unit_cnt = FFMIN(b->band_ext_q_unit, baseline_len);
-        const VLC *tab = &s->sf_vlc[0][len];
+        const VLC *tab = &sf_vlc[0][len];
 
         c->scalefactors[0] = get_bits(gb, len);
 
         for (int i = 1; i < unit_cnt; i++) {
-            int val = c->scalefactors[i - 1] + get_vlc2(gb, tab->table, 9, 2);
+            int val = c->scalefactors[i - 1] + get_vlc2(gb, tab->table,
+                                                        ATRAC9_SF_VLC_BITS, 1);
             c->scalefactors[i] = val & ((1 << len) - 1);
         }
 
@@ -399,12 +417,12 @@ static inline void read_coeffs_coarse(ATRAC9Context *s, ATRAC9BlockData *b,
         if (prec <= max_prec) {
             const int cb = c->codebookset[i];
             const int cbi = at9_q_unit_to_codebookidx[i];
-            const VLC *tab = &s->coeff_vlc[cb][prec][cbi];
+            const VLC *tab = &coeff_vlc[cb][prec][cbi];
             const HuffmanCodebook *huff = &at9_huffman_coeffs[cb][prec][cbi];
             const int groups = bands >> huff->value_cnt_pow;
 
             for (int j = 0; j < groups; j++) {
-                uint16_t val = get_vlc2(gb, tab->table, 9, huff->max_bit_size);
+                uint16_t val = get_vlc2(gb, tab->table, ATRAC9_COEFF_VLC_BITS, 2);
 
                 for (int k = 0; k < huff->value_cnt; k++) {
                     coeffs[k] = sign_extend(val, huff->value_bits);
@@ -769,12 +787,11 @@ imdct:
     return 0;
 }
 
-static int atrac9_decode_frame(AVCodecContext *avctx, void *data,
+static int atrac9_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                                int *got_frame_ptr, AVPacket *avpkt)
 {
     int ret;
     GetBitContext gb;
-    AVFrame *frame = data;
     ATRAC9Context *s = avctx->priv_data;
     const int frames = FFMIN(avpkt->size / s->avg_frame_size, s->frame_count);
 
@@ -817,23 +834,69 @@ static av_cold int atrac9_decode_close(AVCodecContext *avctx)
 {
     ATRAC9Context *s = avctx->priv_data;
 
-    for (int i = 1; i < 7; i++)
-        ff_free_vlc(&s->sf_vlc[0][i]);
-    for (int i = 2; i < 6; i++)
-        ff_free_vlc(&s->sf_vlc[1][i]);
-    for (int i = 0; i < 2; i++)
-        for (int j = 0; j < 8; j++)
-            for (int k = 0; k < 4; k++)
-                ff_free_vlc(&s->coeff_vlc[i][j][k]);
-
     ff_mdct_end(&s->imdct);
-    av_free(s->fdsp);
+    av_freep(&s->fdsp);
 
     return 0;
 }
 
+static av_cold void atrac9_init_vlc(VLC *vlc, int nb_bits, int nb_codes,
+                                    const uint8_t (**tab)[2],
+                                    unsigned *buf_offset, int offset)
+{
+    static VLCElem vlc_buf[24812];
+
+    vlc->table           = &vlc_buf[*buf_offset];
+    vlc->table_allocated = FF_ARRAY_ELEMS(vlc_buf) - *buf_offset;
+    ff_init_vlc_from_lengths(vlc, nb_bits, nb_codes,
+                             &(*tab)[0][1], 2, &(*tab)[0][0], 2, 1,
+                             offset, INIT_VLC_STATIC_OVERLONG, NULL);
+    *buf_offset += vlc->table_size;
+    *tab        += nb_codes;
+}
+
+static av_cold void atrac9_init_static(void)
+{
+    const uint8_t (*tab)[2];
+    unsigned offset = 0;
+
+    /* Unsigned scalefactor VLCs */
+    tab = at9_sfb_a_tab;
+    for (int i = 1; i < 7; i++) {
+        const HuffmanCodebook *hf = &at9_huffman_sf_unsigned[i];
+
+        atrac9_init_vlc(&sf_vlc[0][i], ATRAC9_SF_VLC_BITS,
+                        hf->size, &tab, &offset, 0);
+    }
+
+    /* Signed scalefactor VLCs */
+    tab = at9_sfb_b_tab;
+    for (int i = 2; i < 6; i++) {
+        const HuffmanCodebook *hf = &at9_huffman_sf_signed[i];
+
+        /* The symbols are signed integers in the range -16..15;
+         * the values in the source table are offset by 16 to make
+         * them fit into an uint8_t; the -16 reverses this shift. */
+        atrac9_init_vlc(&sf_vlc[1][i], ATRAC9_SF_VLC_BITS,
+                        hf->size, &tab, &offset, -16);
+    }
+
+    /* Coefficient VLCs */
+    tab = at9_coeffs_tab;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 2; j < 8; j++) {
+            for (int k = i; k < 4; k++) {
+                const HuffmanCodebook *hf = &at9_huffman_coeffs[i][j][k];
+                atrac9_init_vlc(&coeff_vlc[i][j][k], ATRAC9_COEFF_VLC_BITS,
+                                hf->size, &tab, &offset, 0);
+            }
+        }
+    }
+}
+
 static av_cold int atrac9_decode_init(AVCodecContext *avctx)
 {
+    static AVOnce static_table_init = AV_ONCE_INIT;
     GetBitContext gb;
     ATRAC9Context *s = avctx->priv_data;
     int version, block_config_idx, superframe_idx, alloc_c_len;
@@ -841,6 +904,11 @@ static av_cold int atrac9_decode_init(AVCodecContext *avctx)
     s->avctx = avctx;
 
     av_lfg_init(&s->lfg, 0xFBADF00D);
+
+    if (avctx->block_align <= 0) {
+        av_log(avctx, AV_LOG_ERROR, "Invalid block align\n");
+        return AVERROR_INVALIDDATA;
+    }
 
     if (avctx->extradata_size != 12) {
         av_log(avctx, AV_LOG_ERROR, "Invalid extradata length!\n");
@@ -870,7 +938,8 @@ static av_cold int atrac9_decode_init(AVCodecContext *avctx)
     }
     s->block_config = &at9_block_layout[block_config_idx];
 
-    avctx->channel_layout = s->block_config->channel_layout;
+    av_channel_layout_uninit(&avctx->ch_layout);
+    avctx->ch_layout      = s->block_config->channel_layout;
     avctx->sample_fmt     = AV_SAMPLE_FMT_FLTP;
 
     if (get_bits1(&gb)) {
@@ -913,51 +982,21 @@ static av_cold int atrac9_decode_init(AVCodecContext *avctx)
         for (int j = 0; j < i; j++)
             s->alloc_curve[i - 1][j] = at9_tab_b_dist[(j * alloc_c_len) / i];
 
-    /* Unsigned scalefactor VLCs */
-    for (int i = 1; i < 7; i++) {
-        const HuffmanCodebook *hf = &at9_huffman_sf_unsigned[i];
-
-        init_vlc(&s->sf_vlc[0][i], 9, hf->size, hf->bits, 1, 1, hf->codes,
-                 2, 2, 0);
-    }
-
-    /* Signed scalefactor VLCs */
-    for (int i = 2; i < 6; i++) {
-        const HuffmanCodebook *hf = &at9_huffman_sf_signed[i];
-
-        int nums = hf->size;
-        int16_t sym[32];
-        for (int j = 0; j < nums; j++)
-            sym[j] = sign_extend(j, hf->value_bits);
-
-        ff_init_vlc_sparse(&s->sf_vlc[1][i], 9, hf->size, hf->bits, 1, 1,
-                           hf->codes, 2, 2, sym, sizeof(*sym), sizeof(*sym), 0);
-    }
-
-    /* Coefficient VLCs */
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 8; j++) {
-            for (int k = 0; k < 4; k++) {
-                const HuffmanCodebook *hf = &at9_huffman_coeffs[i][j][k];
-                init_vlc(&s->coeff_vlc[i][j][k], 9, hf->size, hf->bits, 1, 1,
-                         hf->codes, 2, 2, 0);
-            }
-        }
-    }
+    ff_thread_once(&static_table_init, atrac9_init_static);
 
     return 0;
 }
 
-AVCodec ff_atrac9_decoder = {
-    .name           = "atrac9",
-    .long_name      = NULL_IF_CONFIG_SMALL("ATRAC9 (Adaptive TRansform Acoustic Coding 9)"),
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_ATRAC9,
+const FFCodec ff_atrac9_decoder = {
+    .p.name         = "atrac9",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("ATRAC9 (Adaptive TRansform Acoustic Coding 9)"),
+    .p.type         = AVMEDIA_TYPE_AUDIO,
+    .p.id           = AV_CODEC_ID_ATRAC9,
     .priv_data_size = sizeof(ATRAC9Context),
     .init           = atrac9_decode_init,
     .close          = atrac9_decode_close,
-    .decode         = atrac9_decode_frame,
+    FF_CODEC_DECODE_CB(atrac9_decode_frame),
     .flush          = atrac9_decode_flush,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
+    .p.capabilities = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
 };

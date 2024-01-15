@@ -64,9 +64,10 @@ typedef struct FrameDecodeData {
  */
 int ff_decode_get_packet(AVCodecContext *avctx, AVPacket *pkt);
 
-int ff_decode_bsfs_init(AVCodecContext *avctx);
-
-void ff_decode_bsfs_uninit(AVCodecContext *avctx);
+/**
+ * Set various frame properties from the codec context / packet data.
+ */
+int ff_decode_frame_props(AVCodecContext *avctx, AVFrame *frame);
 
 /**
  * Make sure avctx.hw_frames_ctx is set. If it's not set, the function will
@@ -77,5 +78,20 @@ int ff_decode_get_hw_frames_ctx(AVCodecContext *avctx,
                                 enum AVHWDeviceType dev_type);
 
 int ff_attach_decode_data(AVFrame *frame);
+
+/**
+ * Check whether the side-data of src contains a palette of
+ * size AVPALETTE_SIZE; if so, copy it to dst and return 1;
+ * else return 0.
+ * Also emit an error message upon encountering a palette
+ * with invalid size.
+ */
+int ff_copy_palette(void *dst, const AVPacket *src, void *logctx);
+
+/**
+ * Perform decoder initialization and validation.
+ * Called when opening the decoder, before the FFCodec.init() call.
+ */
+int ff_decode_preinit(AVCodecContext *avctx);
 
 #endif /* AVCODEC_DECODE_H */

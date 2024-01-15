@@ -20,38 +20,32 @@
  */
 
 #include "config.h"
-#include <float.h>
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
 #include "avformat.h"
-#include "avio_internal.h"
 #include "internal.h"
+#include "mux.h"
 #include "os_support.h"
 #include "avc.h"
 #include "url.h"
-#include "isom.h"
 
 #include "libavutil/opt.h"
 #include "libavutil/avstring.h"
-#include "libavutil/file.h"
 #include "libavutil/mathematics.h"
-#include "libavutil/intreadwrite.h"
+#include "libavutil/uuid.h"
 
 typedef struct Fragment {
-    char file[1024];
-    char infofile[1024];
     int64_t start_time, duration;
     int n;
     int64_t start_pos, size;
+    char file[1024];
+    char infofile[1024];
 } Fragment;
 
 typedef struct OutputStream {
     AVFormatContext *ctx;
-    int ctx_inited;
-    char dirname[1024];
-    uint8_t iobuf[32768];
     URLContext *out;  // Current output stream where all output is written
     URLContext *out2; // Auxiliary output stream where all output is also written
     URLContext *tail_out; // The actual main output stream, if we're currently seeked back to write elsewhere
@@ -65,6 +59,8 @@ typedef struct OutputStream {
     char *private_str;
     int packet_size;
     int audio_tag;
+    char dirname[1024];
+    uint8_t iobuf[32768];
 } OutputStream;
 
 typedef struct SmoothStreamingContext {
@@ -99,14 +95,9 @@ static int64_t ism_seek(void *opaque, int64_t offset, int whence)
     if (whence != SEEK_SET)
         return AVERROR(ENOSYS);
     if (os->tail_out) {
-        if (os->out) {
-            ffurl_close(os->out);
-        }
-        if (os->out2) {
-            ffurl_close(os->out2);
-        }
+        ffurl_closep(&os->out);
+        ffurl_closep(&os->out2);
         os->out = os->tail_out;
-        os->out2 = NULL;
         os->tail_out = NULL;
     }
     if (offset >= os->cur_start_pos) {
@@ -175,16 +166,12 @@ static void ism_free(AVFormatContext *s)
         return;
     for (i = 0; i < s->nb_streams; i++) {
         OutputStream *os = &c->streams[i];
-        ffurl_close(os->out);
-        ffurl_close(os->out2);
-        ffurl_close(os->tail_out);
-        os->out = os->out2 = os->tail_out = NULL;
-        if (os->ctx && os->ctx_inited)
-            av_write_trailer(os->ctx);
+        ffurl_closep(&os->out);
+        ffurl_closep(&os->out2);
+        ffurl_closep(&os->tail_out);
         if (os->ctx && os->ctx->pb)
             avio_context_free(&os->ctx->pb);
-        if (os->ctx)
-            avformat_free_context(os->ctx);
+        avformat_free_context(os->ctx);
         av_freep(&os->private_str);
         for (j = 0; j < os->nb_fragments; j++)
             av_freep(&os->fragments[j]);
@@ -277,7 +264,9 @@ static int write_manifest(AVFormatContext *s, int final)
             if (s->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO)
                 continue;
             last = i;
-            avio_printf(out, "<QualityLevel Index=\"%d\" Bitrate=\"%"PRId64"\" FourCC=\"%s\" SamplingRate=\"%d\" Channels=\"%d\" BitsPerSample=\"16\" PacketSize=\"%d\" AudioTag=\"%d\" CodecPrivateData=\"%s\" />\n", index, s->streams[i]->codecpar->bit_rate, os->fourcc, s->streams[i]->codecpar->sample_rate, s->streams[i]->codecpar->channels, os->packet_size, os->audio_tag, os->private_str);
+            avio_printf(out, "<QualityLevel Index=\"%d\" Bitrate=\"%"PRId64"\" FourCC=\"%s\" SamplingRate=\"%d\" Channels=\"%d\" BitsPerSample=\"16\" PacketSize=\"%d\" AudioTag=\"%d\" CodecPrivateData=\"%s\" />\n",
+                        index, s->streams[i]->codecpar->bit_rate, os->fourcc, s->streams[i]->codecpar->sample_rate,
+                        s->streams[i]->codecpar->ch_layout.nb_channels, os->packet_size, os->audio_tag, os->private_str);
             index++;
         }
         output_chunk_list(&c->streams[last], out, final, c->lookahead_count, c->window_size);
@@ -293,24 +282,21 @@ static int ism_write_header(AVFormatContext *s)
 {
     SmoothStreamingContext *c = s->priv_data;
     int ret = 0, i;
-    ff_const59 AVOutputFormat *oformat;
+    const AVOutputFormat *oformat;
 
     if (mkdir(s->url, 0777) == -1 && errno != EEXIST) {
-        ret = AVERROR(errno);
         av_log(s, AV_LOG_ERROR, "mkdir failed\n");
-        goto fail;
+        return AVERROR(errno);
     }
 
     oformat = av_guess_format("ismv", NULL, NULL);
     if (!oformat) {
-        ret = AVERROR_MUXER_NOT_FOUND;
-        goto fail;
+        return AVERROR_MUXER_NOT_FOUND;
     }
 
-    c->streams = av_mallocz_array(s->nb_streams, sizeof(*c->streams));
+    c->streams = av_calloc(s->nb_streams, sizeof(*c->streams));
     if (!c->streams) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
+        return AVERROR(ENOMEM);
     }
 
     for (i = 0; i < s->nb_streams; i++) {
@@ -328,42 +314,39 @@ static int ism_write_header(AVFormatContext *s)
         }
 
         if (mkdir(os->dirname, 0777) == -1 && errno != EEXIST) {
-            ret = AVERROR(errno);
             av_log(s, AV_LOG_ERROR, "mkdir failed\n");
-            goto fail;
+            return AVERROR(errno);
         }
 
-        ctx = avformat_alloc_context();
-        if (!ctx || ff_copy_whiteblacklists(ctx, s) < 0) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+        os->ctx = ctx = avformat_alloc_context();
+        if (!ctx) {
+            return AVERROR(ENOMEM);
         }
-        os->ctx = ctx;
+        if ((ret = ff_copy_whiteblacklists(ctx, s)) < 0)
+            return ret;
         ctx->oformat = oformat;
         ctx->interrupt_callback = s->interrupt_callback;
 
         if (!(st = avformat_new_stream(ctx, NULL))) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+            return AVERROR(ENOMEM);
         }
         avcodec_parameters_copy(st->codecpar, s->streams[i]->codecpar);
         st->sample_aspect_ratio = s->streams[i]->sample_aspect_ratio;
         st->time_base = s->streams[i]->time_base;
 
-        ctx->pb = avio_alloc_context(os->iobuf, sizeof(os->iobuf), AVIO_FLAG_WRITE, os, NULL, ism_write, ism_seek);
+        ctx->pb = avio_alloc_context(os->iobuf, sizeof(os->iobuf), 1, os, NULL, ism_write, ism_seek);
         if (!ctx->pb) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+            return AVERROR(ENOMEM);
         }
 
         av_dict_set_int(&opts, "ism_lookahead", c->lookahead_count, 0);
         av_dict_set(&opts, "movflags", "frag_custom", 0);
-        if ((ret = avformat_write_header(ctx, &opts)) < 0) {
-             goto fail;
-        }
-        os->ctx_inited = 1;
-        avio_flush(ctx->pb);
+        ret = avformat_write_header(ctx, &opts);
         av_dict_free(&opts);
+        if (ret < 0) {
+             return ret;
+        }
+        avio_flush(ctx->pb);
         s->streams[i]->time_base = st->time_base;
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             c->has_video = 1;
@@ -374,8 +357,7 @@ static int ism_write_header(AVFormatContext *s)
                 os->fourcc = "WVC1";
             } else {
                 av_log(s, AV_LOG_ERROR, "Unsupported video codec\n");
-                ret = AVERROR(EINVAL);
-                goto fail;
+                return AVERROR(EINVAL);
             }
         } else {
             c->has_audio = 1;
@@ -388,8 +370,7 @@ static int ism_write_header(AVFormatContext *s)
                 os->audio_tag = 0x0162;
             } else {
                 av_log(s, AV_LOG_ERROR, "Unsupported audio codec\n");
-                ret = AVERROR(EINVAL);
-                goto fail;
+                return AVERROR(EINVAL);
             }
             os->packet_size = st->codecpar->block_align ? st->codecpar->block_align : 4;
         }
@@ -398,15 +379,13 @@ static int ism_write_header(AVFormatContext *s)
 
     if (!c->has_video && c->min_frag_duration <= 0) {
         av_log(s, AV_LOG_WARNING, "no video stream and no min frag duration set\n");
-        ret = AVERROR(EINVAL);
-        goto fail;
+        return AVERROR(EINVAL);
     }
     ret = write_manifest(s, 0);
+    if (ret < 0)
+        return ret;
 
-fail:
-    if (ret)
-        ism_free(s);
-    return ret;
+    return 0;
 }
 
 static int parse_fragment(AVFormatContext *s, const char *filename, int64_t *start_ts, int64_t *duration, int64_t *moof_size, int64_t size)
@@ -438,13 +417,13 @@ static int parse_fragment(AVFormatContext *s, const char *filename, int64_t *sta
         if (len < 8 || len >= *moof_size)
             goto fail;
         if (tag == MKTAG('u','u','i','d')) {
-            static const uint8_t tfxd[] = {
+            static const AVUUID tfxd = {
                 0x6d, 0x1d, 0x9b, 0x05, 0x42, 0xd5, 0x44, 0xe6,
                 0x80, 0xe2, 0x14, 0x1d, 0xaf, 0xf7, 0x57, 0xb2
             };
-            uint8_t uuid[16];
+            AVUUID uuid;
             avio_read(in, uuid, 16);
-            if (!memcmp(uuid, tfxd, 16) && len >= 8 + 16 + 4 + 16) {
+            if (av_uuid_equal(uuid, tfxd) && len >= 8 + 16 + 4 + 16) {
                 avio_seek(in, 4, SEEK_CUR);
                 *start_ts = avio_rb64(in);
                 *duration = avio_rb64(in);
@@ -465,7 +444,7 @@ static int add_fragment(OutputStream *os, const char *file, const char *infofile
     Fragment *frag;
     if (os->nb_fragments >= os->fragments_size) {
         os->fragments_size = (os->fragments_size + 1) * 2;
-        if ((err = av_reallocp(&os->fragments, sizeof(*os->fragments) *
+        if ((err = av_reallocp_array(&os->fragments, sizeof(*os->fragments),
                                os->fragments_size)) < 0) {
             os->fragments_size = 0;
             os->nb_fragments = 0;
@@ -538,8 +517,7 @@ static int ism_flush(AVFormatContext *s, int final)
         if (!os->out || os->tail_out)
             return AVERROR(EIO);
 
-        ffurl_close(os->out);
-        os->out = NULL;
+        ffurl_closep(&os->out);
         size = os->tail_pos - os->cur_start_pos;
         if ((ret = parse_fragment(s, filename, &start_ts, &duration, &moof_size, size)) < 0)
             break;
@@ -603,15 +581,16 @@ static int ism_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
     SmoothStreamingContext *c = s->priv_data;
     AVStream *st = s->streams[pkt->stream_index];
+    FFStream *const sti = ffstream(st);
     OutputStream *os = &c->streams[pkt->stream_index];
     int64_t end_dts = (c->nb_fragments + 1) * (int64_t) c->min_frag_duration;
     int ret;
 
-    if (st->first_dts == AV_NOPTS_VALUE)
-        st->first_dts = pkt->dts;
+    if (sti->first_dts == AV_NOPTS_VALUE)
+        sti->first_dts = pkt->dts;
 
     if ((!c->has_video || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) &&
-        av_compare_ts(pkt->dts - st->first_dts, st->time_base,
+        av_compare_ts(pkt->dts - sti->first_dts, st->time_base,
                       end_dts, AV_TIME_BASE_Q) >= 0 &&
         pkt->flags & AV_PKT_FLAG_KEY && os->packets_written) {
 
@@ -636,7 +615,6 @@ static int ism_write_trailer(AVFormatContext *s)
         rmdir(s->url);
     }
 
-    ism_free(s);
     return 0;
 }
 
@@ -659,7 +637,7 @@ static const AVClass ism_class = {
 };
 
 
-AVOutputFormat ff_smoothstreaming_muxer = {
+const AVOutputFormat ff_smoothstreaming_muxer = {
     .name           = "smoothstreaming",
     .long_name      = NULL_IF_CONFIG_SMALL("Smooth Streaming Muxer"),
     .priv_data_size = sizeof(SmoothStreamingContext),
@@ -669,5 +647,6 @@ AVOutputFormat ff_smoothstreaming_muxer = {
     .write_header   = ism_write_header,
     .write_packet   = ism_write_packet,
     .write_trailer  = ism_write_trailer,
+    .deinit         = ism_free,
     .priv_class     = &ism_class,
 };

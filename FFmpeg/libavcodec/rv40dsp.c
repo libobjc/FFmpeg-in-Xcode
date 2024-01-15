@@ -26,7 +26,6 @@
 
 #include "libavutil/common.h"
 #include "libavutil/intreadwrite.h"
-#include "avcodec.h"
 #include "h264qpel.h"
 #include "mathops.h"
 #include "pixels.h"
@@ -385,7 +384,7 @@ static void rv40_weight_func_rnd_ ## size (uint8_t *dst, uint8_t *src1, uint8_t 
 \
     for (j = 0; j < size; j++) {\
         for (i = 0; i < size; i++)\
-            dst[i] = (((w2 * src1[i]) >> 9) + ((w1 * src2[i]) >> 9) + 0x10) >> 5;\
+            dst[i] = ((((unsigned)w2 * src1[i]) >> 9) + (((unsigned)w1 * src2[i]) >> 9) + 0x10) >> 5;\
         src1 += stride;\
         src2 += stride;\
         dst  += stride;\
@@ -397,7 +396,7 @@ static void rv40_weight_func_nornd_ ## size (uint8_t *dst, uint8_t *src1, uint8_
 \
     for (j = 0; j < size; j++) {\
         for (i = 0; i < size; i++)\
-            dst[i] = (w2 * src1[i] + w1 * src2[i] + 0x10) >> 5;\
+            dst[i] = ((unsigned)w2 * src1[i] + (unsigned)w1 * src2[i] + 0x10) >> 5;\
         src1 += stride;\
         src2 += stride;\
         dst  += stride;\
@@ -706,10 +705,11 @@ av_cold void ff_rv40dsp_init(RV34DSPContext *c)
     c->rv40_loop_filter_strength[0] = rv40_h_loop_filter_strength;
     c->rv40_loop_filter_strength[1] = rv40_v_loop_filter_strength;
 
-    if (ARCH_AARCH64)
-        ff_rv40dsp_init_aarch64(c);
-    if (ARCH_ARM)
-        ff_rv40dsp_init_arm(c);
-    if (ARCH_X86)
-        ff_rv40dsp_init_x86(c);
+#if ARCH_AARCH64
+    ff_rv40dsp_init_aarch64(c);
+#elif ARCH_ARM
+    ff_rv40dsp_init_arm(c);
+#elif ARCH_X86
+    ff_rv40dsp_init_x86(c);
+#endif
 }

@@ -49,8 +49,8 @@
 
 #define FFT_FLOAT 0
 #define USE_FIXED 1
-#define FFT_FIXED_32 1
 #include "ac3dec.h"
+#include "codec_internal.h"
 
 
 static const int end_freq_inv_tab[8] =
@@ -107,30 +107,17 @@ static void scale_coefs (
       }
     } else {
       shift = -shift;
+      mul <<= shift;
       for (i=0; i<len; i+=8) {
 
-          temp = src[i] * mul;
-          temp1 = src[i+1] * mul;
-          temp2 = src[i+2] * mul;
-
-          dst[i] = temp << shift;
-          temp3 = src[i+3] * mul;
-
-          dst[i+1] = temp1 << shift;
-          temp4 = src[i + 4] * mul;
-          dst[i+2] = temp2 << shift;
-
-          temp5 = src[i+5] * mul;
-          dst[i+3] = temp3 << shift;
-          temp6 = src[i+6] * mul;
-
-          dst[i+4] = temp4 << shift;
-          temp7 = src[i+7] * mul;
-
-          dst[i+5] = temp5 << shift;
-          dst[i+6] = temp6 << shift;
-          dst[i+7] = temp7 << shift;
-
+          dst[i]   = src[i  ] * mul;
+          dst[i+1] = src[i+1] * mul;
+          dst[i+2] = src[i+2] * mul;
+          dst[i+3] = src[i+3] * mul;
+          dst[i+4] = src[i+4] * mul;
+          dst[i+5] = src[i+5] * mul;
+          dst[i+6] = src[i+6] * mul;
+          dst[i+7] = src[i+7] * mul;
       }
     }
 }
@@ -171,6 +158,7 @@ static const AVOption options[] = {
     { "cons_noisegen", "enable consistent noise generation", OFFSET(consistent_noise_generation), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, PAR },
     { "drc_scale", "percentage of dynamic range compression to apply", OFFSET(drc_scale), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 6.0, PAR },
     { "heavy_compr", "enable heavy dynamic range compression", OFFSET(heavy_compression), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, PAR },
+    { "downmix", "Request a specific channel layout from the decoder", OFFSET(downmix_layout), AV_OPT_TYPE_CHLAYOUT, {.str = NULL}, .flags = PAR },
     { NULL},
 };
 
@@ -181,17 +169,19 @@ static const AVClass ac3_decoder_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_ac3_fixed_decoder = {
-    .name           = "ac3_fixed",
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_AC3,
+const FFCodec ff_ac3_fixed_decoder = {
+    .p.name         = "ac3_fixed",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("ATSC A/52A (AC-3)"),
+    .p.type         = AVMEDIA_TYPE_AUDIO,
+    .p.id           = AV_CODEC_ID_AC3,
+    .p.priv_class   = &ac3_decoder_class,
     .priv_data_size = sizeof (AC3DecodeContext),
     .init           = ac3_decode_init,
     .close          = ac3_decode_end,
-    .decode         = ac3_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("ATSC A/52A (AC-3)"),
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
+    FF_CODEC_DECODE_CB(ac3_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_CHANNEL_CONF |
+                      AV_CODEC_CAP_DR1,
+    .p.sample_fmts  = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16P,
                                                       AV_SAMPLE_FMT_NONE },
-    .priv_class     = &ac3_decoder_class,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

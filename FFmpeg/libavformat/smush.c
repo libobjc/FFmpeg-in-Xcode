@@ -51,6 +51,7 @@ static int smush_read_header(AVFormatContext *ctx)
     uint32_t magic, nframes, size, subversion, i;
     uint32_t width = 0, height = 0, got_audio = 0, read = 0;
     uint32_t sample_rate, channels, palette[256];
+    int ret;
 
     magic = avio_rb32(pb);
     avio_skip(pb, 4); // skip movie size
@@ -157,8 +158,8 @@ static int smush_read_header(AVFormatContext *ctx)
     vst->codecpar->height     = height;
 
     if (!smush->version) {
-        if (ff_alloc_extradata(vst->codecpar, 1024 + 2))
-            return AVERROR(ENOMEM);
+        if ((ret = ff_alloc_extradata(vst->codecpar, 1024 + 2)) < 0)
+            return ret;
 
         AV_WL16(vst->codecpar->extradata, subversion);
         for (i = 0; i < 256; i++)
@@ -177,8 +178,7 @@ static int smush_read_header(AVFormatContext *ctx)
         ast->codecpar->codec_id    = AV_CODEC_ID_ADPCM_VIMA;
         ast->codecpar->codec_tag   = 0;
         ast->codecpar->sample_rate = sample_rate;
-        ast->codecpar->channels    = channels;
-
+        ast->codecpar->ch_layout.nb_channels = channels;
         avpriv_set_pts_info(ast, 64, 1, ast->codecpar->sample_rate);
     }
 
@@ -241,7 +241,7 @@ static int smush_read_packet(AVFormatContext *ctx, AVPacket *pkt)
     return 0;
 }
 
-AVInputFormat ff_smush_demuxer = {
+const AVInputFormat ff_smush_demuxer = {
     .name           = "smush",
     .long_name      = NULL_IF_CONFIG_SMALL("LucasArts Smush"),
     .priv_data_size = sizeof(SMUSHContext),

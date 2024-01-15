@@ -27,13 +27,11 @@
 
 #include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
-#include "internal.h"
+#include "libavutil/mem_internal.h"
 #include "avcodec.h"
 #include "h264dec.h"
 #include "h264_ps.h"
-#include "mathops.h"
 #include "mpegutils.h"
-#include "rectangle.h"
 
 /* Deblocking filter (p153) */
 static const uint8_t alpha_table[52*3] = {

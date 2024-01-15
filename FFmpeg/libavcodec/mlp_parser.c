@@ -61,7 +61,10 @@ static int mlp_parse(AVCodecParserContext *s,
     int ret;
     int i, p = 0;
 
+    s->key_frame = 0;
+
     *poutbuf_size = 0;
+    *poutbuf = NULL;
     if (buf_size == 0)
         return 0;
 
@@ -136,6 +139,8 @@ static int mlp_parse(AVCodecParserContext *s,
          * access unit header and all the 2- or 4-byte substream headers. */
         // Only check when this isn't a sync frame - syncs have a checksum.
 
+        s->key_frame = 0;
+
         parity_bits = 0;
         for (i = -1; i < mp->num_substreams; i++) {
             parity_bits ^= buf[p++];
@@ -159,29 +164,28 @@ static int mlp_parse(AVCodecParserContext *s,
         if (ff_mlp_read_major_sync(avctx, &mh, &gb) < 0)
             goto lost_sync;
 
+        s->key_frame = 1;
+
         avctx->bits_per_raw_sample = mh.group1_bits;
         if (avctx->bits_per_raw_sample > 16)
             avctx->sample_fmt = AV_SAMPLE_FMT_S32;
         else
             avctx->sample_fmt = AV_SAMPLE_FMT_S16;
         avctx->sample_rate = mh.group1_samplerate;
+        avctx->frame_size =
         s->duration = mh.access_unit_size;
 
-        if(!avctx->channels || !avctx->channel_layout) {
+        av_channel_layout_uninit(&avctx->ch_layout);
         if (mh.stream_type == 0xbb) {
             /* MLP stream */
-            avctx->channels       = mh.channels_mlp;
-            avctx->channel_layout = mh.channel_layout_mlp;
+            av_channel_layout_from_mask(&avctx->ch_layout, mh.channel_layout_mlp);
         } else { /* mh.stream_type == 0xba */
             /* TrueHD stream */
             if (!mh.channels_thd_stream2) {
-                avctx->channels       = mh.channels_thd_stream1;
-                avctx->channel_layout = mh.channel_layout_thd_stream1;
+                av_channel_layout_from_mask(&avctx->ch_layout, mh.channel_layout_thd_stream1);
             } else {
-                avctx->channels       = mh.channels_thd_stream2;
-                avctx->channel_layout = mh.channel_layout_thd_stream2;
+                av_channel_layout_from_mask(&avctx->ch_layout, mh.channel_layout_thd_stream2);
             }
-        }
         }
 
         if (!mh.is_vbr) /* Stream is CBR */
@@ -200,7 +204,7 @@ lost_sync:
     return 1;
 }
 
-AVCodecParser ff_mlp_parser = {
+const AVCodecParser ff_mlp_parser = {
     .codec_ids      = { AV_CODEC_ID_MLP, AV_CODEC_ID_TRUEHD },
     .priv_data_size = sizeof(MLPParseContext),
     .parser_init    = mlp_init,

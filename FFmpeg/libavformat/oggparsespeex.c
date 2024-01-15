@@ -22,13 +22,8 @@
       DEALINGS IN THE SOFTWARE.
 **/
 
-#include <stdlib.h>
-
-#include "libavutil/bswap.h"
-#include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
-
-#include "libavcodec/bytestream.h"
+#include "libavutil/intreadwrite.h"
 
 #include "avformat.h"
 #include "internal.h"
@@ -46,6 +41,7 @@ static int speex_header(AVFormatContext *s, int idx) {
     struct speex_params *spxp = os->private;
     AVStream *st = s->streams[idx];
     uint8_t *p = os->buf + os->pstart;
+    int ret;
 
     if (!spxp) {
         spxp = av_mallocz(sizeof(*spxp));
@@ -59,6 +55,7 @@ static int speex_header(AVFormatContext *s, int idx) {
 
     if (spxp->seq == 0) {
         int frames_per_packet;
+        int channels;
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id = AV_CODEC_ID_SPEEX;
 
@@ -72,13 +69,12 @@ static int speex_header(AVFormatContext *s, int idx) {
             av_log(s, AV_LOG_ERROR, "Invalid sample rate %d\n", st->codecpar->sample_rate);
             return AVERROR_INVALIDDATA;
         }
-        st->codecpar->channels = AV_RL32(p + 48);
-        if (st->codecpar->channels < 1 || st->codecpar->channels > 2) {
+        channels = AV_RL32(p + 48);
+        if (channels < 1 || channels > 2) {
             av_log(s, AV_LOG_ERROR, "invalid channel count. Speex must be mono or stereo.\n");
             return AVERROR_INVALIDDATA;
         }
-        st->codecpar->channel_layout = st->codecpar->channels == 1 ? AV_CH_LAYOUT_MONO :
-                                                                     AV_CH_LAYOUT_STEREO;
+        av_channel_layout_default(&st->codecpar->ch_layout, channels);
 
         spxp->packet_size  = AV_RL32(p + 56);
         frames_per_packet  = AV_RL32(p + 64);
@@ -92,8 +88,8 @@ static int speex_header(AVFormatContext *s, int idx) {
         if (frames_per_packet)
             spxp->packet_size *= frames_per_packet;
 
-        if (ff_alloc_extradata(st->codecpar, os->psize) < 0)
-            return AVERROR(ENOMEM);
+        if ((ret = ff_alloc_extradata(st->codecpar, os->psize)) < 0)
+            return ret;
         memcpy(st->codecpar->extradata, p, st->codecpar->extradata_size);
 
         avpriv_set_pts_info(st, 64, 1, st->codecpar->sample_rate);

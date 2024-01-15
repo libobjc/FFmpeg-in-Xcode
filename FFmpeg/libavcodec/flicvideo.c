@@ -41,6 +41,7 @@
 #include "libavutil/intreadwrite.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "internal.h"
 #include "mathops.h"
 
@@ -148,7 +149,7 @@ static av_cold int flic_decode_init(AVCodecContext *avctx)
 }
 
 static int flic_decode_frame_8BPP(AVCodecContext *avctx,
-                                  void *data, int *got_frame,
+                                  AVFrame *rframe, int *got_frame,
                                   const uint8_t *buf, int buf_size)
 {
     FlicDecodeContext *s = avctx->priv_data;
@@ -185,7 +186,7 @@ static int flic_decode_frame_8BPP(AVCodecContext *avctx,
 
     bytestream2_init(&g2, buf, buf_size);
 
-    if ((ret = ff_reget_buffer(avctx, s->frame)) < 0)
+    if ((ret = ff_reget_buffer(avctx, s->frame, 0)) < 0)
         return ret;
 
     pixels = s->frame->data[0];
@@ -478,7 +479,7 @@ static int flic_decode_frame_8BPP(AVCodecContext *avctx,
         s->new_palette = 0;
     }
 
-    if ((ret = av_frame_ref(data, s->frame)) < 0)
+    if ((ret = av_frame_ref(rframe, s->frame)) < 0)
         return ret;
 
     *got_frame = 1;
@@ -487,7 +488,7 @@ static int flic_decode_frame_8BPP(AVCodecContext *avctx,
 }
 
 static int flic_decode_frame_15_16BPP(AVCodecContext *avctx,
-                                      void *data, int *got_frame,
+                                      AVFrame *rframe, int *got_frame,
                                       const uint8_t *buf, int buf_size)
 {
     /* Note, the only difference between the 15Bpp and 16Bpp */
@@ -519,7 +520,7 @@ static int flic_decode_frame_15_16BPP(AVCodecContext *avctx,
 
     bytestream2_init(&g2, buf, buf_size);
 
-    if ((ret = ff_reget_buffer(avctx, s->frame)) < 0)
+    if ((ret = ff_reget_buffer(avctx, s->frame, 0)) < 0)
         return ret;
 
     pixels = s->frame->data[0];
@@ -735,6 +736,8 @@ static int flic_decode_frame_15_16BPP(AVCodecContext *avctx,
                 bytestream2_skip(&g2, chunk_size - 6);
             } else {
 
+                if (bytestream2_get_bytes_left(&g2) < 2 * s->avctx->width * s->avctx->height )
+                    return AVERROR_INVALIDDATA;
                 for (y_ptr = 0; y_ptr < s->frame->linesize[0] * s->avctx->height;
                      y_ptr += s->frame->linesize[0]) {
 
@@ -778,7 +781,7 @@ static int flic_decode_frame_15_16BPP(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "Processed FLI chunk where chunk size = %d " \
                "and final chunk ptr = %d\n", buf_size, bytestream2_tell(&g2));
 
-    if ((ret = av_frame_ref(data, s->frame)) < 0)
+    if ((ret = av_frame_ref(rframe, s->frame)) < 0)
         return ret;
 
     *got_frame = 1;
@@ -787,7 +790,7 @@ static int flic_decode_frame_15_16BPP(AVCodecContext *avctx,
 }
 
 static int flic_decode_frame_24BPP(AVCodecContext *avctx,
-                                   void *data, int *got_frame,
+                                   AVFrame *rframe, int *got_frame,
                                    const uint8_t *buf, int buf_size)
 {
     FlicDecodeContext *s = avctx->priv_data;
@@ -817,7 +820,7 @@ static int flic_decode_frame_24BPP(AVCodecContext *avctx,
 
     bytestream2_init(&g2, buf, buf_size);
 
-    if ((ret = ff_reget_buffer(avctx, s->frame)) < 0)
+    if ((ret = ff_reget_buffer(avctx, s->frame, 0)) < 0)
         return ret;
 
     pixels = s->frame->data[0];
@@ -1024,14 +1027,7 @@ static int flic_decode_frame_24BPP(AVCodecContext *avctx,
                 for (y_ptr = 0; y_ptr < s->frame->linesize[0] * s->avctx->height;
                      y_ptr += s->frame->linesize[0]) {
 
-                    pixel_countdown = s->avctx->width;
-                    pixel_ptr = 0;
-                    while (pixel_countdown > 0) {
-                        pixel = bytestream2_get_le24(&g2);
-                        AV_WL24(&pixels[y_ptr + pixel_ptr], pixel);
-                        pixel_ptr += 3;
-                        pixel_countdown--;
-                    }
+                    bytestream2_get_buffer(&g2, pixels + y_ptr, 3*s->avctx->width);
                     if (s->avctx->width & 1)
                         bytestream2_skip(&g2, 3);
                 }
@@ -1065,7 +1061,7 @@ static int flic_decode_frame_24BPP(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "Processed FLI chunk where chunk size = %d " \
                "and final chunk ptr = %d\n", buf_size, bytestream2_tell(&g2));
 
-    if ((ret = av_frame_ref(data, s->frame)) < 0)
+    if ((ret = av_frame_ref(rframe, s->frame)) < 0)
         return ret;
 
     *got_frame = 1;
@@ -1073,21 +1069,20 @@ static int flic_decode_frame_24BPP(AVCodecContext *avctx,
     return buf_size;
 }
 
-static int flic_decode_frame(AVCodecContext *avctx,
-                             void *data, int *got_frame,
-                             AVPacket *avpkt)
+static int flic_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                             int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     if (avctx->pix_fmt == AV_PIX_FMT_PAL8) {
-        return flic_decode_frame_8BPP(avctx, data, got_frame,
+        return flic_decode_frame_8BPP(avctx, frame, got_frame,
                                       buf, buf_size);
     } else if ((avctx->pix_fmt == AV_PIX_FMT_RGB555) ||
                (avctx->pix_fmt == AV_PIX_FMT_RGB565)) {
-        return flic_decode_frame_15_16BPP(avctx, data, got_frame,
+        return flic_decode_frame_15_16BPP(avctx, frame, got_frame,
                                           buf, buf_size);
     } else if (avctx->pix_fmt == AV_PIX_FMT_BGR24) {
-        return flic_decode_frame_24BPP(avctx, data, got_frame,
+        return flic_decode_frame_24BPP(avctx, frame, got_frame,
                                        buf, buf_size);
     }
 
@@ -1109,14 +1104,15 @@ static av_cold int flic_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_flic_decoder = {
-    .name           = "flic",
-    .long_name      = NULL_IF_CONFIG_SMALL("Autodesk Animator Flic video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_FLIC,
+const FFCodec ff_flic_decoder = {
+    .p.name         = "flic",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Autodesk Animator Flic video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_FLIC,
     .priv_data_size = sizeof(FlicDecodeContext),
     .init           = flic_decode_init,
     .close          = flic_decode_end,
-    .decode         = flic_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(flic_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

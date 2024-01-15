@@ -26,14 +26,20 @@
 
 #define BITSTREAM_READER_LE
 
+#include "config.h"
+#include "config_components.h"
 #include "libavutil/attributes.h"
+#include "libavutil/mem_internal.h"
 
 #include "avcodec.h"
+#include "blockdsp.h"
+#include "codec_internal.h"
 #include "get_bits.h"
+#include "idctdsp.h"
 #include "internal.h"
 #include "libavutil/thread.h"
 #include "mathops.h"
-#include "mpeg12.h"
+#include "mpeg12dec.h"
 #include "mpeg12data.h"
 #include "mpeg12vlc.h"
 
@@ -132,14 +138,15 @@ static const uint8_t speedhq_run[121] = {
     31,
 };
 
-static RLTable ff_rl_speedhq = {
+RLTable ff_rl_speedhq = {
     121,
     121,
-    (const uint16_t (*)[])speedhq_vlc,
+    speedhq_vlc,
     speedhq_run,
     speedhq_level,
 };
 
+#if CONFIG_SPEEDHQ_DECODER
 /* NOTE: The first element is always 16, unscaled. */
 static const uint8_t unscaled_quant_matrix[64] = {
     16, 16, 19, 22, 26, 27, 29, 34,
@@ -152,25 +159,19 @@ static const uint8_t unscaled_quant_matrix[64] = {
     27, 29, 35, 38, 46, 56, 69, 83
 };
 
-static uint8_t ff_speedhq_static_rl_table_store[2][2*MAX_RUN + MAX_LEVEL + 3];
-
-static VLC ff_dc_lum_vlc_le;
-static VLC ff_dc_chroma_vlc_le;
-static VLC ff_dc_alpha_run_vlc_le;
-static VLC ff_dc_alpha_level_vlc_le;
+static VLC dc_lum_vlc_le;
+static VLC dc_chroma_vlc_le;
+static VLC dc_alpha_run_vlc_le;
+static VLC dc_alpha_level_vlc_le;
 
 static inline int decode_dc_le(GetBitContext *gb, int component)
 {
     int code, diff;
 
     if (component == 0 || component == 3) {
-        code = get_vlc2(gb, ff_dc_lum_vlc_le.table, DC_VLC_BITS, 2);
+        code = get_vlc2(gb, dc_lum_vlc_le.table, DC_VLC_BITS, 2);
     } else {
-        code = get_vlc2(gb, ff_dc_chroma_vlc_le.table, DC_VLC_BITS, 2);
-    }
-    if (code < 0) {
-        av_log(NULL, AV_LOG_ERROR, "invalid dc code at\n");
-        return 0xffff;
+        code = get_vlc2(gb, dc_chroma_vlc_le.table, DC_VLC_BITS, 2);
     }
     if (!code) {
         diff = 0;
@@ -194,7 +195,7 @@ static inline int decode_alpha_block(const SHQContext *s, GetBitContext *gb, uin
             int run, level;
 
             UPDATE_CACHE_LE(re, gb);
-            GET_VLC(run, re, gb, ff_dc_alpha_run_vlc_le.table, ALPHA_VLC_BITS, 2);
+            GET_VLC(run, re, gb, dc_alpha_run_vlc_le.table, ALPHA_VLC_BITS, 2);
 
             if (run < 0) break;
             i += run;
@@ -202,7 +203,7 @@ static inline int decode_alpha_block(const SHQContext *s, GetBitContext *gb, uin
                 return AVERROR_INVALIDDATA;
 
             UPDATE_CACHE_LE(re, gb);
-            GET_VLC(level, re, gb, ff_dc_alpha_level_vlc_le.table, ALPHA_VLC_BITS, 2);
+            GET_VLC(level, re, gb, dc_alpha_level_vlc_le.table, ALPHA_VLC_BITS, 2);
             block[i++] = level;
         }
 
@@ -277,6 +278,79 @@ static inline int decode_dct_block(const SHQContext *s, GetBitContext *gb, int l
     return 0;
 }
 
+static int decode_speedhq_border(const SHQContext *s, GetBitContext *gb, AVFrame *frame, int field_number, int line_stride)
+{
+    int linesize_y  = frame->linesize[0] * line_stride;
+    int linesize_cb = frame->linesize[1] * line_stride;
+    int linesize_cr = frame->linesize[2] * line_stride;
+    int linesize_a;
+    int ret;
+
+    if (s->alpha_type != SHQ_NO_ALPHA)
+        linesize_a = frame->linesize[3] * line_stride;
+
+    for (int y = 0; y < frame->height; y += 16 * line_stride) {
+        int last_dc[4] = { 1024, 1024, 1024, 1024 };
+        uint8_t *dest_y, *dest_cb, *dest_cr, *dest_a;
+        uint8_t last_alpha[16];
+        int x = frame->width - 8;
+
+        dest_y = frame->data[0] + frame->linesize[0] * (y + field_number) + x;
+        if (s->subsampling == SHQ_SUBSAMPLING_420) {
+            dest_cb = frame->data[1] + frame->linesize[1] * (y/2 + field_number) + x / 2;
+            dest_cr = frame->data[2] + frame->linesize[2] * (y/2 + field_number) + x / 2;
+        } else {
+            av_assert2(s->subsampling == SHQ_SUBSAMPLING_422);
+            dest_cb = frame->data[1] + frame->linesize[1] * (y + field_number) + x / 2;
+            dest_cr = frame->data[2] + frame->linesize[2] * (y + field_number) + x / 2;
+        }
+        if (s->alpha_type != SHQ_NO_ALPHA) {
+            memset(last_alpha, 255, sizeof(last_alpha));
+            dest_a = frame->data[3] + frame->linesize[3] * (y + field_number) + x;
+        }
+
+        if ((ret = decode_dct_block(s, gb, last_dc, 0, dest_y, linesize_y)) < 0)
+            return ret;
+        if ((ret = decode_dct_block(s, gb, last_dc, 0, dest_y + 8, linesize_y)) < 0)
+            return ret;
+        if ((ret = decode_dct_block(s, gb, last_dc, 0, dest_y + 8 * linesize_y, linesize_y)) < 0)
+            return ret;
+        if ((ret = decode_dct_block(s, gb, last_dc, 0, dest_y + 8 * linesize_y + 8, linesize_y)) < 0)
+            return ret;
+        if ((ret = decode_dct_block(s, gb, last_dc, 1, dest_cb, linesize_cb)) < 0)
+            return ret;
+        if ((ret = decode_dct_block(s, gb, last_dc, 2, dest_cr, linesize_cr)) < 0)
+            return ret;
+
+        if (s->subsampling != SHQ_SUBSAMPLING_420) {
+            if ((ret = decode_dct_block(s, gb, last_dc, 1, dest_cb + 8 * linesize_cb, linesize_cb)) < 0)
+                return ret;
+            if ((ret = decode_dct_block(s, gb, last_dc, 2, dest_cr + 8 * linesize_cr, linesize_cr)) < 0)
+                return ret;
+        }
+
+        if (s->alpha_type == SHQ_RLE_ALPHA) {
+            /* Alpha coded using 16x8 RLE blocks. */
+            if ((ret = decode_alpha_block(s, gb, last_alpha, dest_a, linesize_a)) < 0)
+                return ret;
+            if ((ret = decode_alpha_block(s, gb, last_alpha, dest_a + 8 * linesize_a, linesize_a)) < 0)
+                return ret;
+        } else if (s->alpha_type == SHQ_DCT_ALPHA) {
+            /* Alpha encoded exactly like luma. */
+            if ((ret = decode_dct_block(s, gb, last_dc, 3, dest_a, linesize_a)) < 0)
+                return ret;
+            if ((ret = decode_dct_block(s, gb, last_dc, 3, dest_a + 8, linesize_a)) < 0)
+                return ret;
+            if ((ret = decode_dct_block(s, gb, last_dc, 3, dest_a + 8 * linesize_a, linesize_a)) < 0)
+                return ret;
+            if ((ret = decode_dct_block(s, gb, last_dc, 3, dest_a + 8 * linesize_a + 8, linesize_a)) < 0)
+                return ret;
+        }
+    }
+
+    return 0;
+}
+
 static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf_size, AVFrame *frame, int field_number, int start, int end, int line_stride)
 {
     int ret, slice_number, slice_offsets[5];
@@ -284,6 +358,7 @@ static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf
     int linesize_cb = frame->linesize[1] * line_stride;
     int linesize_cr = frame->linesize[2] * line_stride;
     int linesize_a;
+    GetBitContext gb;
 
     if (s->alpha_type != SHQ_NO_ALPHA)
         linesize_a = frame->linesize[3] * line_stride;
@@ -305,7 +380,6 @@ static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf
     }
 
     for (slice_number = 0; slice_number < 4; slice_number++) {
-        GetBitContext gb;
         uint32_t slice_begin, slice_end;
         int x, y;
 
@@ -334,7 +408,7 @@ static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf
                 dest_a = frame->data[3] + frame->linesize[3] * (y + field_number);
             }
 
-            for (x = 0; x < frame->width; x += 16) {
+            for (x = 0; x < frame->width - 8 * (s->subsampling != SHQ_SUBSAMPLING_444); x += 16) {
                 /* Decode the four luma blocks. */
                 if ((ret = decode_dct_block(s, &gb, last_dc, 0, dest_y, linesize_y)) < 0)
                     return ret;
@@ -403,6 +477,9 @@ static int decode_speedhq_field(const SHQContext *s, const uint8_t *buf, int buf
         }
     }
 
+    if (s->subsampling != SHQ_SUBSAMPLING_444 && (frame->width & 15))
+        return decode_speedhq_border(s, &gb, frame, field_number, line_stride);
+
     return 0;
 }
 
@@ -412,19 +489,19 @@ static void compute_quant_matrix(int *output, int qscale)
     for (i = 0; i < 64; i++) output[i] = unscaled_quant_matrix[ff_zigzag_direct[i]] * qscale;
 }
 
-static int speedhq_decode_frame(AVCodecContext *avctx,
-                                void *data, int *got_frame,
-                                AVPacket *avpkt)
+static int speedhq_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                                int *got_frame, AVPacket *avpkt)
 {
     SHQContext * const s = avctx->priv_data;
     const uint8_t *buf   = avpkt->data;
     int buf_size         = avpkt->size;
-    AVFrame *frame       = data;
     uint8_t quality;
     uint32_t second_field_offset;
     int ret;
 
-    if (buf_size < 4)
+    if (buf_size < 4 || avctx->width < 8 || avctx->width % 8 != 0)
+        return AVERROR_INVALIDDATA;
+    if (buf_size < avctx->width*avctx->height / 64 / 4)
         return AVERROR_INVALIDDATA;
 
     quality = buf[0];
@@ -447,7 +524,7 @@ static int speedhq_decode_frame(AVCodecContext *avctx,
     }
     frame->key_frame = 1;
 
-    if (second_field_offset == 4) {
+    if (second_field_offset == 4 || second_field_offset == (buf_size-4)) {
         /*
          * Overlapping first and second fields is used to signal
          * encoding only a single field. In this case, "height"
@@ -515,7 +592,7 @@ static av_cold void compute_alpha_vlcs(void)
 
     av_assert0(entry == FF_ARRAY_ELEMS(run_code));
 
-    INIT_LE_VLC_SPARSE_STATIC(&ff_dc_alpha_run_vlc_le, ALPHA_VLC_BITS,
+    INIT_LE_VLC_SPARSE_STATIC(&dc_alpha_run_vlc_le, ALPHA_VLC_BITS,
                               FF_ARRAY_ELEMS(run_code),
                               run_bits, 1, 1,
                               run_code, 2, 2,
@@ -555,49 +632,25 @@ static av_cold void compute_alpha_vlcs(void)
 
     av_assert0(entry == FF_ARRAY_ELEMS(level_code));
 
-    INIT_LE_VLC_SPARSE_STATIC(&ff_dc_alpha_level_vlc_le, ALPHA_VLC_BITS,
+    INIT_LE_VLC_SPARSE_STATIC(&dc_alpha_level_vlc_le, ALPHA_VLC_BITS,
                               FF_ARRAY_ELEMS(level_code),
                               level_bits, 1, 1,
                               level_code, 2, 2,
                               level_symbols, 2, 2, 288);
 }
 
-static uint32_t reverse(uint32_t num, int bits)
-{
-    return bitswap_32(num) >> (32 - bits);
-}
-
-static void reverse_code(const uint16_t *code, const uint8_t *bits,
-                         uint16_t *reversed_code, int num_entries)
-{
-    int i;
-    for (i = 0; i < num_entries; i++) {
-        reversed_code[i] = reverse(code[i], bits[i]);
-    }
-}
-
 static av_cold void speedhq_static_init(void)
 {
-    uint16_t ff_mpeg12_vlc_dc_lum_code_reversed[12];
-    uint16_t ff_mpeg12_vlc_dc_chroma_code_reversed[12];
+    /* Exactly the same as MPEG-2, except for a little-endian reader. */
+    INIT_CUSTOM_VLC_STATIC(&dc_lum_vlc_le, DC_VLC_BITS, 12,
+                           ff_mpeg12_vlc_dc_lum_bits, 1, 1,
+                           ff_mpeg12_vlc_dc_lum_code, 2, 2,
+                           INIT_VLC_OUTPUT_LE, 512);
+    INIT_CUSTOM_VLC_STATIC(&dc_chroma_vlc_le, DC_VLC_BITS, 12,
+                           ff_mpeg12_vlc_dc_chroma_bits, 1, 1,
+                           ff_mpeg12_vlc_dc_chroma_code, 2, 2,
+                           INIT_VLC_OUTPUT_LE, 514);
 
-    /* Exactly the same as MPEG-2, except little-endian. */
-    reverse_code(ff_mpeg12_vlc_dc_lum_code,
-                 ff_mpeg12_vlc_dc_lum_bits,
-                 ff_mpeg12_vlc_dc_lum_code_reversed,
-                 12);
-    INIT_LE_VLC_STATIC(&ff_dc_lum_vlc_le, DC_VLC_BITS, 12,
-                       ff_mpeg12_vlc_dc_lum_bits, 1, 1,
-                       ff_mpeg12_vlc_dc_lum_code_reversed, 2, 2, 512);
-    reverse_code(ff_mpeg12_vlc_dc_chroma_code,
-                 ff_mpeg12_vlc_dc_chroma_bits,
-                 ff_mpeg12_vlc_dc_chroma_code_reversed,
-                 12);
-    INIT_LE_VLC_STATIC(&ff_dc_chroma_vlc_le, DC_VLC_BITS, 12,
-                       ff_mpeg12_vlc_dc_chroma_bits, 1, 1,
-                       ff_mpeg12_vlc_dc_chroma_code_reversed, 2, 2, 514);
-
-    ff_rl_init(&ff_rl_speedhq, ff_speedhq_static_rl_table_store);
     INIT_2D_VLC_RL(ff_rl_speedhq, 674, INIT_VLC_LE);
 
     compute_alpha_vlcs();
@@ -673,13 +726,15 @@ static av_cold int speedhq_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_speedhq_decoder = {
-    .name           = "speedhq",
-    .long_name      = NULL_IF_CONFIG_SMALL("NewTek SpeedHQ"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_SPEEDHQ,
+const FFCodec ff_speedhq_decoder = {
+    .p.name         = "speedhq",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("NewTek SpeedHQ"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_SPEEDHQ,
     .priv_data_size = sizeof(SHQContext),
     .init           = speedhq_decode_init,
-    .decode         = speedhq_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(speedhq_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };
+#endif /* CONFIG_SPEEDHQ_DECODER */

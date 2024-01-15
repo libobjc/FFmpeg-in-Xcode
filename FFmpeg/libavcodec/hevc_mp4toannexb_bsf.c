@@ -24,9 +24,10 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
 
-#include "avcodec.h"
 #include "bsf.h"
+#include "bsf_internal.h"
 #include "bytestream.h"
+#include "defs.h"
 #include "hevc.h"
 
 #define MIN_HEVCC_LENGTH 23
@@ -141,8 +142,17 @@ static int hevc_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *out)
         int      nalu_type;
         int is_irap, add_extradata, extra_size, prev_size;
 
+        if (bytestream2_get_bytes_left(&gb) < s->length_size) {
+            ret = AVERROR_INVALIDDATA;
+            goto fail;
+        }
         for (i = 0; i < s->length_size; i++)
             nalu_size = (nalu_size << 8) | bytestream2_get_byte(&gb);
+
+        if (nalu_size < 2 || nalu_size > bytestream2_get_bytes_left(&gb)) {
+            ret = AVERROR_INVALIDDATA;
+            goto fail;
+        }
 
         nalu_type = (bytestream2_peek_byte(&gb) >> 1) & 0x3f;
 
@@ -152,8 +162,7 @@ static int hevc_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *out)
         extra_size    = add_extradata * ctx->par_out->extradata_size;
         got_irap     |= is_irap;
 
-        if (SIZE_MAX - nalu_size < 4 ||
-            SIZE_MAX - 4 - nalu_size < extra_size) {
+        if (FFMIN(INT_MAX, SIZE_MAX) < 4ULL + nalu_size + extra_size) {
             ret = AVERROR_INVALIDDATA;
             goto fail;
         }
@@ -164,7 +173,7 @@ static int hevc_mp4toannexb_filter(AVBSFContext *ctx, AVPacket *out)
         if (ret < 0)
             goto fail;
 
-        if (add_extradata)
+        if (extra_size)
             memcpy(out->data + prev_size, ctx->par_out->extradata, extra_size);
         AV_WB32(out->data + prev_size + extra_size, 1);
         bytestream2_get_buffer(&gb, out->data + prev_size + 4 + extra_size, nalu_size);
@@ -186,10 +195,10 @@ static const enum AVCodecID codec_ids[] = {
     AV_CODEC_ID_HEVC, AV_CODEC_ID_NONE,
 };
 
-const AVBitStreamFilter ff_hevc_mp4toannexb_bsf = {
-    .name           = "hevc_mp4toannexb",
+const FFBitStreamFilter ff_hevc_mp4toannexb_bsf = {
+    .p.name         = "hevc_mp4toannexb",
+    .p.codec_ids    = codec_ids,
     .priv_data_size = sizeof(HEVCBSFContext),
     .init           = hevc_mp4toannexb_init,
     .filter         = hevc_mp4toannexb_filter,
-    .codec_ids      = codec_ids,
 };

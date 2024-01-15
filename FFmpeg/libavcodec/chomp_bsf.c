@@ -19,9 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avcodec.h"
 #include "bsf.h"
-#include "internal.h"
+#include "bsf_internal.h"
 
 static int chomp_filter(AVBSFContext *ctx, AVPacket *pkt)
 {
@@ -40,7 +39,7 @@ static int chomp_filter(AVBSFContext *ctx, AVPacket *pkt)
 /**
  * This filter removes a string of NULL bytes from the end of a packet.
  */
-const AVBitStreamFilter ff_chomp_bsf = {
-    .name   = "chomp",
+const FFBitStreamFilter ff_chomp_bsf = {
+    .p.name = "chomp",
     .filter = chomp_filter,
 };

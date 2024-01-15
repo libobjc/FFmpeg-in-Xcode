@@ -49,6 +49,9 @@ static const struct {
     { AV_CPU_FLAG_SETEND,    "setend"     },
 #elif ARCH_PPC
     { AV_CPU_FLAG_ALTIVEC,   "altivec"    },
+#elif ARCH_MIPS
+    { AV_CPU_FLAG_MMI,       "mmi"        },
+    { AV_CPU_FLAG_MSA,       "msa"        },
 #elif ARCH_X86
     { AV_CPU_FLAG_MMX,       "mmx"        },
     { AV_CPU_FLAG_MMXEXT,    "mmxext"     },
@@ -74,6 +77,10 @@ static const struct {
     { AV_CPU_FLAG_BMI2,      "bmi2"       },
     { AV_CPU_FLAG_AESNI,     "aesni"      },
     { AV_CPU_FLAG_AVX512,    "avx512"     },
+    { AV_CPU_FLAG_SLOW_GATHER, "slowgather" },
+#elif ARCH_LOONGARCH
+    { AV_CPU_FLAG_LSX,       "lsx"        },
+    { AV_CPU_FLAG_LASX,      "lasx"       },
 #endif
     { 0 }
 };

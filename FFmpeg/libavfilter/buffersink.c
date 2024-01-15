@@ -24,6 +24,7 @@
  */
 
 #include "libavutil/avassert.h"
+#include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "libavutil/internal.h"
@@ -43,26 +44,52 @@ typedef struct BufferSinkContext {
     unsigned warning_limit;
 
     /* only used for video */
-    enum AVPixelFormat *pixel_fmts;           ///< list of accepted pixel formats, must be terminated with -1
+    enum AVPixelFormat *pixel_fmts;     ///< list of accepted pixel formats
     int pixel_fmts_size;
 
     /* only used for audio */
-    enum AVSampleFormat *sample_fmts;       ///< list of accepted sample formats, terminated by AV_SAMPLE_FMT_NONE
+    enum AVSampleFormat *sample_fmts;   ///< list of accepted sample formats
     int sample_fmts_size;
-    int64_t *channel_layouts;               ///< list of accepted channel layouts, terminated by -1
+#if FF_API_OLD_CHANNEL_LAYOUT
+    int64_t *channel_layouts;           ///< list of accepted channel layouts
     int channel_layouts_size;
-    int *channel_counts;                    ///< list of accepted channel counts, terminated by -1
+    int *channel_counts;                ///< list of accepted channel counts
     int channel_counts_size;
+#endif
+    char *channel_layouts_str;          ///< list of accepted channel layouts
     int all_channel_counts;
-    int *sample_rates;                      ///< list of accepted sample rates, terminated by -1
+    int *sample_rates;                  ///< list of accepted sample rates
     int sample_rates_size;
 
     AVFrame *peeked_frame;
 } BufferSinkContext;
 
 #define NB_ITEMS(list) (list ## _size / sizeof(*list))
-#define FIFO_INIT_SIZE 8
-#define FIFO_INIT_ELEMENT_SIZE sizeof(void *)
+
+#if FF_API_OLD_CHANNEL_LAYOUT
+static void cleanup_redundant_layouts(AVFilterContext *ctx)
+{
+    BufferSinkContext *buf = ctx->priv;
+    int nb_layouts = NB_ITEMS(buf->channel_layouts);
+    int nb_counts = NB_ITEMS(buf->channel_counts);
+    uint64_t counts = 0;
+    int i, lc, n;
+
+    for (i = 0; i < nb_counts; i++)
+        if (buf->channel_counts[i] < 64)
+            counts |= (uint64_t)1 << buf->channel_counts[i];
+    for (i = lc = 0; i < nb_layouts; i++) {
+        n = av_popcount64(buf->channel_layouts[i]);
+        if (n < 64 && (counts & ((uint64_t)1 << n)))
+            av_log(ctx, AV_LOG_WARNING,
+                   "Removing channel layout 0x%"PRIx64", redundant with %d channels\n",
+                   buf->channel_layouts[i], n);
+        else
+            buf->channel_layouts[lc++] = buf->channel_layouts[i];
+    }
+    buf->channel_layouts_size = lc * sizeof(*buf->channel_layouts);
+}
+#endif
 
 int attribute_align_arg av_buffersink_get_frame(AVFilterContext *ctx, AVFrame *frame)
 {
@@ -127,6 +154,7 @@ int attribute_align_arg av_buffersink_get_samples(AVFilterContext *ctx,
     return get_frame_internal(ctx, frame, 0, nb_samples);
 }
 
+#if FF_API_BUFFERSINK_ALLOC
 AVBufferSinkParams *av_buffersink_params_alloc(void)
 {
     static const int pixel_fmts[] = { AV_PIX_FMT_NONE };
@@ -146,6 +174,7 @@ AVABufferSinkParams *av_abuffersink_params_alloc(void)
         return NULL;
     return params;
 }
+#endif
 
 static av_cold int common_init(AVFilterContext *ctx)
 {
@@ -176,8 +205,7 @@ void av_buffersink_set_frame_size(AVFilterContext *ctx, unsigned frame_size)
 {
     AVFilterLink *inlink = ctx->inputs[0];
 
-    inlink->min_samples = inlink->max_samples =
-    inlink->partial_buf_size = frame_size;
+    inlink->min_samples = inlink->max_samples = frame_size;
 }
 
 #define MAKE_AVFILTERLINK_ACCESSOR(type, field) \
@@ -195,24 +223,32 @@ MAKE_AVFILTERLINK_ACCESSOR(int              , w                  )
 MAKE_AVFILTERLINK_ACCESSOR(int              , h                  )
 MAKE_AVFILTERLINK_ACCESSOR(AVRational       , sample_aspect_ratio)
 
-MAKE_AVFILTERLINK_ACCESSOR(int              , channels           )
+#if FF_API_OLD_CHANNEL_LAYOUT
+FF_DISABLE_DEPRECATION_WARNINGS
 MAKE_AVFILTERLINK_ACCESSOR(uint64_t         , channel_layout     )
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 MAKE_AVFILTERLINK_ACCESSOR(int              , sample_rate        )
 
 MAKE_AVFILTERLINK_ACCESSOR(AVBufferRef *    , hw_frames_ctx      )
 
-static av_cold int vsink_init(AVFilterContext *ctx, void *opaque)
+int av_buffersink_get_channels(const AVFilterContext *ctx)
 {
-    BufferSinkContext *buf = ctx->priv;
-    AVBufferSinkParams *params = opaque;
+    av_assert0(ctx->filter->activate == activate);
+    return ctx->inputs[0]->ch_layout.nb_channels;
+}
+
+int av_buffersink_get_ch_layout(const AVFilterContext *ctx, AVChannelLayout *out)
+{
+    AVChannelLayout ch_layout = { 0 };
     int ret;
 
-    if (params) {
-        if ((ret = av_opt_set_int_list(buf, "pix_fmts", params->pixel_fmts, AV_PIX_FMT_NONE, 0)) < 0)
-            return ret;
-    }
-
-    return common_init(ctx);
+    av_assert0(ctx->filter->activate == activate);
+    ret = av_channel_layout_copy(&ch_layout, &ctx->inputs[0]->ch_layout);
+    if (ret < 0)
+        return ret;
+    *out = ch_layout;
+    return 0;
 }
 
 #define CHECK_LIST_SIZE(field) \
@@ -244,35 +280,21 @@ static int vsink_query_formats(AVFilterContext *ctx)
     return 0;
 }
 
-static av_cold int asink_init(AVFilterContext *ctx, void *opaque)
-{
-    BufferSinkContext *buf = ctx->priv;
-    AVABufferSinkParams *params = opaque;
-    int ret;
-
-    if (params) {
-        if ((ret = av_opt_set_int_list(buf, "sample_fmts",     params->sample_fmts,  AV_SAMPLE_FMT_NONE, 0)) < 0 ||
-            (ret = av_opt_set_int_list(buf, "sample_rates",    params->sample_rates,    -1, 0)) < 0 ||
-            (ret = av_opt_set_int_list(buf, "channel_layouts", params->channel_layouts, -1, 0)) < 0 ||
-            (ret = av_opt_set_int_list(buf, "channel_counts",  params->channel_counts,  -1, 0)) < 0 ||
-            (ret = av_opt_set_int(buf, "all_channel_counts", params->all_channel_counts, 0)) < 0)
-            return ret;
-    }
-    return common_init(ctx);
-}
-
 static int asink_query_formats(AVFilterContext *ctx)
 {
     BufferSinkContext *buf = ctx->priv;
     AVFilterFormats *formats = NULL;
+    AVChannelLayout layout = { 0 };
     AVFilterChannelLayouts *layouts = NULL;
     unsigned i;
     int ret;
 
     CHECK_LIST_SIZE(sample_fmts)
     CHECK_LIST_SIZE(sample_rates)
+#if FF_API_OLD_CHANNEL_LAYOUT
     CHECK_LIST_SIZE(channel_layouts)
     CHECK_LIST_SIZE(channel_counts)
+#endif
 
     if (buf->sample_fmts_size) {
         for (i = 0; i < NB_ITEMS(buf->sample_fmts); i++)
@@ -282,14 +304,51 @@ static int asink_query_formats(AVFilterContext *ctx)
             return ret;
     }
 
-    if (buf->channel_layouts_size || buf->channel_counts_size ||
-        buf->all_channel_counts) {
+    if (
+#if FF_API_OLD_CHANNEL_LAYOUT
+        buf->channel_layouts_size || buf->channel_counts_size ||
+#endif
+        buf->channel_layouts_str || buf->all_channel_counts) {
+#if FF_API_OLD_CHANNEL_LAYOUT
+        cleanup_redundant_layouts(ctx);
         for (i = 0; i < NB_ITEMS(buf->channel_layouts); i++)
-            if ((ret = ff_add_channel_layout(&layouts, buf->channel_layouts[i])) < 0)
+            if ((ret = av_channel_layout_from_mask(&layout, buf->channel_layouts[i])) < 0 ||
+                (ret = ff_add_channel_layout(&layouts, &layout)) < 0)
                 return ret;
-        for (i = 0; i < NB_ITEMS(buf->channel_counts); i++)
-            if ((ret = ff_add_channel_layout(&layouts, FF_COUNT2LAYOUT(buf->channel_counts[i]))) < 0)
+        for (i = 0; i < NB_ITEMS(buf->channel_counts); i++) {
+            layout = FF_COUNT2LAYOUT(buf->channel_counts[i]);
+            if ((ret = ff_add_channel_layout(&layouts, &layout)) < 0)
                 return ret;
+        }
+#endif
+        if (buf->channel_layouts_str) {
+            const char *cur = buf->channel_layouts_str;
+
+#if FF_API_OLD_CHANNEL_LAYOUT
+            if (layouts)
+                av_log(ctx, AV_LOG_WARNING,
+                       "Conflicting ch_layouts and list of channel_counts/channel_layouts. Ignoring the former\n");
+            else
+#endif
+            while (cur) {
+                char *next = strchr(cur, '|');
+                if (next)
+                    *next++ = 0;
+
+                ret = av_channel_layout_from_string(&layout, cur);
+                if (ret < 0) {
+                    av_log(ctx, AV_LOG_ERROR, "Error parsing channel layout: %s.\n", cur);
+                    return ret;
+                }
+                ret = ff_add_channel_layout(&layouts, &layout);
+                av_channel_layout_uninit(&layout);
+                if (ret < 0)
+                    return ret;
+
+                cur = next;
+            }
+        }
+
         if (buf->all_channel_counts) {
             if (layouts)
                 av_log(ctx, AV_LOG_WARNING,
@@ -324,8 +383,14 @@ static const AVOption buffersink_options[] = {
 static const AVOption abuffersink_options[] = {
     { "sample_fmts",     "set the supported sample formats",  OFFSET(sample_fmts),     AV_OPT_TYPE_BINARY, .flags = FLAGS },
     { "sample_rates",    "set the supported sample rates",    OFFSET(sample_rates),    AV_OPT_TYPE_BINARY, .flags = FLAGS },
-    { "channel_layouts", "set the supported channel layouts", OFFSET(channel_layouts), AV_OPT_TYPE_BINARY, .flags = FLAGS },
-    { "channel_counts",  "set the supported channel counts",  OFFSET(channel_counts),  AV_OPT_TYPE_BINARY, .flags = FLAGS },
+#if FF_API_OLD_CHANNEL_LAYOUT
+    { "channel_layouts", "set the supported channel layouts (deprecated, use ch_layouts)",
+                         OFFSET(channel_layouts), AV_OPT_TYPE_BINARY, .flags = FLAGS | AV_OPT_FLAG_DEPRECATED },
+    { "channel_counts",  "set the supported channel counts (deprecated, use ch_layouts)",
+                         OFFSET(channel_counts),  AV_OPT_TYPE_BINARY, .flags = FLAGS | AV_OPT_FLAG_DEPRECATED },
+#endif
+    { "ch_layouts",      "set a '|'-separated list of supported channel layouts",
+                         OFFSET(channel_layouts_str), AV_OPT_TYPE_STRING, .flags = FLAGS },
     { "all_channel_counts", "accept all channel counts", OFFSET(all_channel_counts), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
     { NULL },
 };
@@ -336,42 +401,38 @@ AVFILTER_DEFINE_CLASS(abuffersink);
 
 static const AVFilterPad avfilter_vsink_buffer_inputs[] = {
     {
-        .name         = "default",
-        .type         = AVMEDIA_TYPE_VIDEO,
+        .name = "default",
+        .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vsink_buffer = {
-    .name        = "buffersink",
-    .description = NULL_IF_CONFIG_SMALL("Buffer video frames, and make them available to the end of the filter graph."),
-    .priv_size   = sizeof(BufferSinkContext),
-    .priv_class  = &buffersink_class,
-    .init_opaque = vsink_init,
-
-    .query_formats = vsink_query_formats,
-    .activate    = activate,
-    .inputs      = avfilter_vsink_buffer_inputs,
-    .outputs     = NULL,
+const AVFilter ff_vsink_buffer = {
+    .name          = "buffersink",
+    .description   = NULL_IF_CONFIG_SMALL("Buffer video frames, and make them available to the end of the filter graph."),
+    .priv_size     = sizeof(BufferSinkContext),
+    .priv_class    = &buffersink_class,
+    .init          = common_init,
+    .activate      = activate,
+    FILTER_INPUTS(avfilter_vsink_buffer_inputs),
+    .outputs       = NULL,
+    FILTER_QUERY_FUNC(vsink_query_formats),
 };
 
 static const AVFilterPad avfilter_asink_abuffer_inputs[] = {
     {
-        .name         = "default",
-        .type         = AVMEDIA_TYPE_AUDIO,
+        .name = "default",
+        .type = AVMEDIA_TYPE_AUDIO,
     },
-    { NULL }
 };
 
-AVFilter ff_asink_abuffer = {
-    .name        = "abuffersink",
-    .description = NULL_IF_CONFIG_SMALL("Buffer audio frames, and make them available to the end of the filter graph."),
-    .priv_class  = &abuffersink_class,
-    .priv_size   = sizeof(BufferSinkContext),
-    .init_opaque = asink_init,
-
-    .query_formats = asink_query_formats,
-    .activate    = activate,
-    .inputs      = avfilter_asink_abuffer_inputs,
-    .outputs     = NULL,
+const AVFilter ff_asink_abuffer = {
+    .name          = "abuffersink",
+    .description   = NULL_IF_CONFIG_SMALL("Buffer audio frames, and make them available to the end of the filter graph."),
+    .priv_class    = &abuffersink_class,
+    .priv_size     = sizeof(BufferSinkContext),
+    .init          = common_init,
+    .activate      = activate,
+    FILTER_INPUTS(avfilter_asink_abuffer_inputs),
+    .outputs       = NULL,
+    FILTER_QUERY_FUNC(asink_query_formats),
 };

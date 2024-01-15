@@ -26,7 +26,6 @@
 #define AVFORMAT_OGGDEC_H
 
 #include "avformat.h"
-#include "metadata.h"
 
 struct ogg_codec {
     const int8_t *magic;
@@ -84,9 +83,10 @@ struct ogg_stream {
     int got_start;
     int got_data;   ///< 1 if the stream got some data (non-initial packets), 0 otherwise
     int nb_header; ///< set to the number of parsed headers
+    int start_trimming; ///< set the number of packets to drop from the start
     int end_trimming; ///< set the number of packets to drop from the end
     uint8_t *new_metadata;
-    unsigned int new_metadata_size;
+    size_t new_metadata_size;
     void *private;
 };
 
@@ -114,7 +114,6 @@ struct ogg {
 #define OGG_NOGRANULE_VALUE (-1ull)
 
 extern const struct ogg_codec ff_celt_codec;
-extern const struct ogg_codec ff_daala_codec;
 extern const struct ogg_codec ff_dirac_codec;
 extern const struct ogg_codec ff_flac_codec;
 extern const struct ogg_codec ff_ogm_audio_codec;
@@ -130,9 +129,25 @@ extern const struct ogg_codec ff_theora_codec;
 extern const struct ogg_codec ff_vorbis_codec;
 extern const struct ogg_codec ff_vp8_codec;
 
+/**
+ * Parse Vorbis comments
+ *
+ * @note  The buffer will be temporarily modifed by this function,
+ *        so it needs to be writable. Furthermore it must be padded
+ *        by a single byte (not counted in size).
+ *        All changes will have been reverted upon return.
+ */
 int ff_vorbis_comment(AVFormatContext *ms, AVDictionary **m,
                       const uint8_t *buf, int size, int parse_picture);
 
+/**
+ * Parse Vorbis comments and add metadata to an AVStream
+ *
+ * @note  The buffer will be temporarily modifed by this function,
+ *        so it needs to be writable. Furthermore it must be padded
+ *        by a single byte (not counted in size).
+ *        All changes will have been reverted upon return.
+ */
 int ff_vorbis_stream_comment(AVFormatContext *as, AVStream *st,
                              const uint8_t *buf, int size);
 

@@ -21,10 +21,12 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include <vdpau/vdpau.h>
 
 #include "avcodec.h"
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "mpegvideo.h"
 #include "vdpau.h"
 #include "vdpau_internal.h"
@@ -73,8 +75,9 @@ static int vdpau_mpeg_start_frame(AVCodecContext *avctx,
     info->f_code[1][0]               = s->mpeg_f_code[1][0];
     info->f_code[1][1]               = s->mpeg_f_code[1][1];
     for (i = 0; i < 64; ++i) {
-        info->intra_quantizer_matrix[i]     = s->intra_matrix[i];
-        info->non_intra_quantizer_matrix[i] = s->inter_matrix[i];
+        int n = s->idsp.idct_permutation[i];
+        info->intra_quantizer_matrix[i]     = s->intra_matrix[n];
+        info->non_intra_quantizer_matrix[i] = s->inter_matrix[n];
     }
 
     return ff_vdpau_common_start_frame(pic_ctx, buffer, size);

@@ -34,10 +34,12 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/float_dsp.h"
 #include "libavutil/lfg.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/random_seed.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "fft.h"
 #include "get_bits.h"
 #include "internal.h"
@@ -128,22 +130,19 @@ static av_cold int decode_init(AVCodecContext * avctx) {
     s->scale_bias = 1.0/(32768*8);
     avctx->sample_fmt = AV_SAMPLE_FMT_FLT;
 
-    /* Generate overlap window */
-    if (!ff_sine_128[127])
-        ff_init_ff_sine_windows(7);
+    av_channel_layout_uninit(&avctx->ch_layout);
+    avctx->ch_layout      = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
 
-    avctx->channels       = 1;
-    avctx->channel_layout = AV_CH_LAYOUT_MONO;
+    /* Generate overlap window */
+    ff_init_ff_sine_windows(7);
 
     return 0;
 }
 
-static int decode_tag(AVCodecContext *avctx, void *data,
+static int decode_tag(AVCodecContext *avctx, AVFrame *frame,
                       int *got_frame_ptr, AVPacket *avpkt)
 {
-    AVFrame *frame     = data;
     const uint8_t *buf = avpkt->data;
-    const uint8_t *side=av_packet_get_side_data(avpkt, 'F', NULL);
     int buf_size = avpkt->size;
     NellyMoserDecodeContext *s = avctx->priv_data;
     int blocks, i, ret;
@@ -160,15 +159,6 @@ static int decode_tag(AVCodecContext *avctx, void *data,
         av_log(avctx, AV_LOG_WARNING, "Leftover bytes: %d.\n",
                buf_size % NELLY_BLOCK_LEN);
     }
-    /* Normal numbers of blocks for sample rates:
-     *  8000 Hz - 1
-     * 11025 Hz - 2
-     * 16000 Hz - 3
-     * 22050 Hz - 4
-     * 44100 Hz - 8
-     */
-    if(side && blocks>1 && avctx->sample_rate%11025==0 && (1<<((side[0]>>2)&3)) == blocks)
-        avctx->sample_rate= 11025*(blocks/2);
 
     /* get output buffer */
     frame->nb_samples = NELLY_SAMPLES * blocks;
@@ -196,16 +186,17 @@ static av_cold int decode_end(AVCodecContext * avctx) {
     return 0;
 }
 
-AVCodec ff_nellymoser_decoder = {
-    .name           = "nellymoser",
-    .long_name      = NULL_IF_CONFIG_SMALL("Nellymoser Asao"),
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_NELLYMOSER,
+const FFCodec ff_nellymoser_decoder = {
+    .p.name         = "nellymoser",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Nellymoser Asao"),
+    .p.type         = AVMEDIA_TYPE_AUDIO,
+    .p.id           = AV_CODEC_ID_NELLYMOSER,
     .priv_data_size = sizeof(NellyMoserDecodeContext),
     .init           = decode_init,
     .close          = decode_end,
-    .decode         = decode_tag,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_PARAM_CHANGE,
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLT,
+    FF_CODEC_DECODE_CB(decode_tag),
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_PARAM_CHANGE | AV_CODEC_CAP_CHANNEL_CONF,
+    .p.sample_fmts  = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLT,
                                                       AV_SAMPLE_FMT_NONE },
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

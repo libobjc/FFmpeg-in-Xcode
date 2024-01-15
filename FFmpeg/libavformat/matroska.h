@@ -22,9 +22,9 @@
 #ifndef AVFORMAT_MATROSKA_H
 #define AVFORMAT_MATROSKA_H
 
-#include "libavcodec/avcodec.h"
+#include "libavcodec/codec_id.h"
+#include "avformat.h"
 #include "metadata.h"
-#include "internal.h"
 
 /* EBML version supported */
 #define EBML_VERSION 1
@@ -98,6 +98,11 @@
 #define MATROSKA_ID_TRACKFLAGENABLED 0xB9
 #define MATROSKA_ID_TRACKFLAGDEFAULT 0x88
 #define MATROSKA_ID_TRACKFLAGFORCED 0x55AA
+#define MATROSKA_ID_TRACKFLAGHEARINGIMPAIRED  0x55AB
+#define MATROSKA_ID_TRACKFLAGVISUALIMPAIRED   0x55AC
+#define MATROSKA_ID_TRACKFLAGTEXTDESCRIPTIONS 0x55AD
+#define MATROSKA_ID_TRACKFLAGORIGINAL         0x55AE
+#define MATROSKA_ID_TRACKFLAGCOMMENTARY       0x55AF
 #define MATROSKA_ID_TRACKFLAGLACING 0x9C
 #define MATROSKA_ID_TRACKMINCACHE 0x6DE7
 #define MATROSKA_ID_TRACKMAXCACHE 0x6DF8
@@ -106,6 +111,7 @@
 #define MATROSKA_ID_TRACKCONTENTENCODING 0x6240
 #define MATROSKA_ID_TRACKTIMECODESCALE 0x23314F
 #define MATROSKA_ID_TRACKMAXBLKADDID 0x55EE
+#define MATROSKA_ID_TRACKBLKADDMAPPING 0x41E4
 
 /* IDs in the trackvideo master */
 #define MATROSKA_ID_VIDEOFRAMERATE 0x2383E3
@@ -183,6 +189,12 @@
 #define MATROSKA_ID_ENCODINGSIGHASHALGO 0x47E6
 #define MATROSKA_ID_ENCODINGSIGKEYID 0x47E4
 #define MATROSKA_ID_ENCODINGSIGNATURE 0x47E3
+
+/* IDs in the block addition mapping master */
+#define MATROSKA_ID_BLKADDIDVALUE 0x41F0
+#define MATROSKA_ID_BLKADDIDNAME 0x41A4
+#define MATROSKA_ID_BLKADDIDTYPE 0x41E7
+#define MATROSKA_ID_BLKADDIDEXTRADATA 0x41ED
 
 /* ID in the cues master */
 #define MATROSKA_ID_POINTENTRY 0xBB
@@ -271,6 +283,7 @@ typedef enum {
   MATROSKA_TRACK_TYPE_COMPLEX  = 0x3,
   MATROSKA_TRACK_TYPE_LOGO     = 0x10,
   MATROSKA_TRACK_TYPE_SUBTITLE = 0x11,
+  MATROSKA_TRACK_TYPE_BUTTONS  = 0x12,
   MATROSKA_TRACK_TYPE_CONTROL  = 0x20,
   MATROSKA_TRACK_TYPE_METADATA = 0x21,
 } MatroskaTrackType;
@@ -285,13 +298,13 @@ typedef enum {
 typedef enum {
     MATROSKA_VIDEO_INTERLACE_FLAG_UNDETERMINED = 0,
     MATROSKA_VIDEO_INTERLACE_FLAG_INTERLACED   = 1,
-    MATROSKA_VIDEO_INTERLACE_FLAG_PROGRESSIVE  = 2
+    MATROSKA_VIDEO_INTERLACE_FLAG_PROGRESSIVE  = 2,
 } MatroskaVideoInterlaceFlag;
 
 typedef enum {
     MATROSKA_VIDEO_FIELDORDER_PROGRESSIVE  = 0,
-    MATROSKA_VIDEO_FIELDORDER_UNDETERMINED = 2,
     MATROSKA_VIDEO_FIELDORDER_TT           = 1,
+    MATROSKA_VIDEO_FIELDORDER_UNDETERMINED = 2,
     MATROSKA_VIDEO_FIELDORDER_BB           = 6,
     MATROSKA_VIDEO_FIELDORDER_TB           = 9,
     MATROSKA_VIDEO_FIELDORDER_BT           = 14,
@@ -361,8 +374,6 @@ typedef struct CodecTags{
 
 extern const CodecTags ff_mkv_codec_tags[];
 extern const CodecTags ff_webm_codec_tags[];
-extern const CodecMime ff_mkv_mime_tags[];
-extern const CodecMime ff_mkv_image_mime_tags[];
 extern const AVMetadataConv ff_mkv_metadata_conv[];
 extern const char * const ff_matroska_video_stereo_mode[MATROSKA_VIDEO_STEREOMODE_TYPE_NB];
 extern const char * const ff_matroska_video_stereo_plane[MATROSKA_VIDEO_STEREO_PLANE_COUNT];
@@ -380,5 +391,7 @@ extern const char * const ff_matroska_video_stereo_plane[MATROSKA_VIDEO_STEREO_P
 #define CODEC_PRIVATE_SIZE "webm_dash_manifest_codec_priv_size"
 
 int ff_mkv_stereo3d_conv(AVStream *st, MatroskaVideoStereoModeType stereo_mode);
+
+#define DVCC_DVVC_BLOCK_TYPE_NAME "Dolby Vision configuration"
 
 #endif /* AVFORMAT_MATROSKA_H */

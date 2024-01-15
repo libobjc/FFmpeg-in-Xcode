@@ -55,6 +55,8 @@ static int64_t read_ts(char **line, int *duration)
     if (sscanf(*line, "%"SCNd64",%"SCNd64, &start, &end) == 2) {
         *line += strcspn(*line, "\"");
         *line += !!**line;
+        if (end < start || end - (uint64_t)start > INT_MAX)
+            return AV_NOPTS_VALUE;
         *duration = end - start;
         return start;
     }
@@ -65,7 +67,6 @@ static int pjs_read_header(AVFormatContext *s)
 {
     PJSContext *pjs = s->priv_data;
     AVStream *st = avformat_new_stream(s, NULL);
-    int res = 0;
 
     if (!st)
         return AVERROR(ENOMEM);
@@ -101,38 +102,18 @@ static int pjs_read_header(AVFormatContext *s)
     }
 
     ff_subtitles_queue_finalize(s, &pjs->q);
-    return res;
-}
-
-static int pjs_read_packet(AVFormatContext *s, AVPacket *pkt)
-{
-    PJSContext *pjs = s->priv_data;
-    return ff_subtitles_queue_read_packet(&pjs->q, pkt);
-}
-
-static int pjs_read_seek(AVFormatContext *s, int stream_index,
-                         int64_t min_ts, int64_t ts, int64_t max_ts, int flags)
-{
-    PJSContext *pjs = s->priv_data;
-    return ff_subtitles_queue_seek(&pjs->q, s, stream_index,
-                                   min_ts, ts, max_ts, flags);
-}
-
-static int pjs_read_close(AVFormatContext *s)
-{
-    PJSContext *pjs = s->priv_data;
-    ff_subtitles_queue_clean(&pjs->q);
     return 0;
 }
 
-AVInputFormat ff_pjs_demuxer = {
+const AVInputFormat ff_pjs_demuxer = {
     .name           = "pjs",
     .long_name      = NULL_IF_CONFIG_SMALL("PJS (Phoenix Japanimation Society) subtitles"),
     .priv_data_size = sizeof(PJSContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = pjs_probe,
     .read_header    = pjs_read_header,
-    .read_packet    = pjs_read_packet,
-    .read_seek2     = pjs_read_seek,
-    .read_close     = pjs_read_close,
     .extensions     = "pjs",
+    .read_packet    = ff_subtitles_read_packet,
+    .read_seek2     = ff_subtitles_read_seek,
+    .read_close     = ff_subtitles_read_close,
 };

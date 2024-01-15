@@ -79,7 +79,7 @@ static void vector_clipf_c(float *dst, const float *src, int len,
 static int32_t scalarproduct_int16_c(const int16_t *v1, const int16_t *v2,
                                      int order)
 {
-    int res = 0;
+    unsigned res = 0;
 
     while (order--)
         res += *v1++ **v2++;
@@ -109,10 +109,11 @@ av_cold void ff_audiodsp_init(AudioDSPContext *c)
     c->vector_clip_int32   = vector_clip_int32_c;
     c->vector_clipf        = vector_clipf_c;
 
-    if (ARCH_ARM)
-        ff_audiodsp_init_arm(c);
-    if (ARCH_PPC)
-        ff_audiodsp_init_ppc(c);
-    if (ARCH_X86)
-        ff_audiodsp_init_x86(c);
+#if ARCH_ARM
+    ff_audiodsp_init_arm(c);
+#elif ARCH_PPC
+    ff_audiodsp_init_ppc(c);
+#elif ARCH_X86
+    ff_audiodsp_init_x86(c);
+#endif
 }

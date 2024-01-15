@@ -20,14 +20,34 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavcodec/put_bits.h"
 #include "libavutil/avassert.h"
+#include "libavutil/fifo.h"
 #include "avformat.h"
+#include "flv.h"
 #include "swf.h"
+
+#define AUDIO_FIFO_SIZE 65536
+
+typedef struct SWFEncContext {
+    int64_t duration_pos;
+    int64_t tag_pos;
+    int64_t vframes_pos;
+    int samples_per_frame;
+    int sound_samples;
+    int swf_frame_number;
+    int video_frame_number;
+    int tag;
+    AVFifo *audio_fifo;
+    AVCodecParameters *audio_par, *video_par;
+    AVStream *video_st;
+} SWFEncContext;
 
 static void put_swf_tag(AVFormatContext *s, int tag)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
 
     swf->tag_pos = avio_tell(pb);
@@ -43,7 +63,7 @@ static void put_swf_tag(AVFormatContext *s, int tag)
 
 static void put_swf_end_tag(AVFormatContext *s)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
     int64_t pos;
     int tag_len, tag;
@@ -173,7 +193,7 @@ static void put_swf_matrix(AVIOContext *pb,
 
 static int swf_write_header(AVFormatContext *s)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
     PutBitContext p;
     uint8_t buf1[256];
@@ -193,7 +213,7 @@ static int swf_write_header(AVFormatContext *s)
             }
             if (par->codec_id == AV_CODEC_ID_MP3) {
                 swf->audio_par = par;
-                swf->audio_fifo= av_fifo_alloc(AUDIO_FIFO_SIZE);
+                swf->audio_fifo = av_fifo_alloc2(AUDIO_FIFO_SIZE, 1, 0);
                 if (!swf->audio_fifo)
                     return AVERROR(ENOMEM);
             } else {
@@ -205,13 +225,13 @@ static int swf_write_header(AVFormatContext *s)
                 av_log(s, AV_LOG_ERROR, "SWF muxer only supports 1 video stream\n");
                 return AVERROR_INVALIDDATA;
             }
-            if (par->codec_id == AV_CODEC_ID_VP6F ||
-                par->codec_id == AV_CODEC_ID_FLV1 ||
+            if (ff_codec_get_tag(ff_swf_codec_tags, par->codec_id) ||
+                par->codec_id == AV_CODEC_ID_PNG ||
                 par->codec_id == AV_CODEC_ID_MJPEG) {
                 swf->video_st  = s->streams[i];
                 swf->video_par = par;
             } else {
-                av_log(s, AV_LOG_ERROR, "SWF muxer only supports VP6, FLV1 and MJPEG\n");
+                av_log(s, AV_LOG_ERROR, "SWF muxer only supports VP6, FLV, Flash Screen Video, PNG and MJPEG\n");
                 return -1;
             }
         }
@@ -240,8 +260,12 @@ static int swf_write_header(AVFormatContext *s)
 
     if (!strcmp("avm2", s->oformat->name))
         version = 9;
-    else if (swf->video_par && swf->video_par->codec_id == AV_CODEC_ID_VP6F)
-        version = 8; /* version 8 and above support VP6 codec */
+    else if (swf->video_par && (swf->video_par->codec_id == AV_CODEC_ID_VP6A ||
+                                swf->video_par->codec_id == AV_CODEC_ID_VP6F ||
+                                swf->video_par->codec_id == AV_CODEC_ID_PNG))
+        version = 8; /* version 8 and above support VP6 and PNG codec */
+    else if (swf->video_par && swf->video_par->codec_id == AV_CODEC_ID_FLASHSV)
+        version = 7; /* version 7 and above support Flash Screen Video codec */
     else if (swf->video_par && swf->video_par->codec_id == AV_CODEC_ID_FLV1)
         version = 6; /* version 6 and above support FLV1 codec */
     else
@@ -256,19 +280,19 @@ static int swf_write_header(AVFormatContext *s)
         av_log(s, AV_LOG_ERROR, "Invalid (too large) frame rate %d/%d\n", rate, rate_base);
         return AVERROR(EINVAL);
     }
-    avio_wl16(pb, (rate * 256) / rate_base); /* frame rate */
+    avio_wl16(pb, (rate * 256LL) / rate_base); /* frame rate */
     swf->duration_pos = avio_tell(pb);
     avio_wl16(pb, (uint16_t)(DUMMY_DURATION * (int64_t)rate / rate_base)); /* frame count */
 
-    /* avm2/swf v9 (also v8?) files require a file attribute tag */
-    if (version == 9) {
+    /* swf v8 and later files require a file attribute tag */
+    if (version >= 8) {
         put_swf_tag(s, TAG_FILEATTRIBUTES);
-        avio_wl32(pb, 1<<3); /* set ActionScript v3/AVM2 flag */
+        avio_wl32(pb, (version >= 9) << 3); /* set ActionScript v3/AVM2 flag */
         put_swf_end_tag(s);
     }
 
     /* define a shape with the jpeg inside */
-    if (swf->video_par && swf->video_par->codec_id == AV_CODEC_ID_MJPEG) {
+    if (swf->video_par && (swf->video_par->codec_id == AV_CODEC_ID_MJPEG || swf->video_par->codec_id == AV_CODEC_ID_PNG)) {
         put_swf_tag(s, TAG_DEFINESHAPE);
 
         avio_wl16(pb, SHAPE_ID); /* ID of shape */
@@ -326,7 +350,7 @@ static int swf_write_header(AVFormatContext *s)
             return -1;
         }
         v |= 0x02; /* 16 bit playback */
-        if (swf->audio_par->channels == 2)
+        if (swf->audio_par->ch_layout.nb_channels == 2)
             v |= 0x01; /* stereo playback */
         avio_w8(s->pb, v);
         v |= 0x20; /* mp3 compressed */
@@ -337,22 +361,27 @@ static int swf_write_header(AVFormatContext *s)
         put_swf_end_tag(s);
     }
 
-    avio_flush(s->pb);
+    return 0;
+}
+
+static int fifo_avio_wrapper(void *opaque, void *buf, size_t *nb_elems)
+{
+    avio_write(opaque, buf, *nb_elems);
     return 0;
 }
 
 static int swf_write_video(AVFormatContext *s,
-                           AVCodecParameters *par, const uint8_t *buf, int size)
+                           AVCodecParameters *par, const uint8_t *buf, int size, unsigned pkt_flags)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
+    unsigned codec_tag = ff_codec_get_tag(ff_swf_codec_tags, par->codec_id);
 
     /* Flash Player limit */
     if (swf->swf_frame_number == 16000)
         av_log(s, AV_LOG_INFO, "warning: Flash Player limit of 16000 frames reached\n");
 
-    if (par->codec_id == AV_CODEC_ID_VP6F ||
-        par->codec_id == AV_CODEC_ID_FLV1) {
+    if (codec_tag) {
         if (swf->video_frame_number == 0) {
             /* create a new video object */
             put_swf_tag(s, TAG_VIDEOSTREAM);
@@ -362,7 +391,7 @@ static int swf_write_video(AVFormatContext *s,
             avio_wl16(pb, par->width);
             avio_wl16(pb, par->height);
             avio_w8(pb, 0);
-            avio_w8(pb,ff_codec_get_tag(ff_swf_codec_tags, par->codec_id));
+            avio_w8(pb, codec_tag);
             put_swf_end_tag(s);
 
             /* place the video object for the first time */
@@ -388,9 +417,14 @@ static int swf_write_video(AVFormatContext *s,
         put_swf_tag(s, TAG_VIDEOFRAME | TAG_LONG);
         avio_wl16(pb, VIDEO_ID);
         avio_wl16(pb, swf->video_frame_number++);
+        if (par->codec_id == AV_CODEC_ID_FLASHSV) {
+            /* FrameType and CodecId is needed here even if it is not documented correctly in the SWF specs */
+            int flags = codec_tag | (pkt_flags & AV_PKT_FLAG_KEY ? FLV_FRAME_KEY : FLV_FRAME_INTER);
+            avio_w8(pb, flags);
+        }
         avio_write(pb, buf, size);
         put_swf_end_tag(s);
-    } else if (par->codec_id == AV_CODEC_ID_MJPEG) {
+    } else if (par->codec_id == AV_CODEC_ID_MJPEG || par->codec_id == AV_CODEC_ID_PNG) {
         if (swf->swf_frame_number > 0) {
             /* remove the shape */
             put_swf_tag(s, TAG_REMOVEOBJECT);
@@ -409,8 +443,9 @@ static int swf_write_video(AVFormatContext *s,
         avio_wl16(pb, BITMAP_ID); /* ID of the image */
 
         /* a dummy jpeg header seems to be required */
-        avio_wb32(pb, 0xffd8ffd9);
-        /* write the jpeg image */
+        if (par->codec_id == AV_CODEC_ID_MJPEG)
+            avio_wb32(pb, 0xffd8ffd9);
+        /* write the jpeg/png image */
         avio_write(pb, buf, size);
 
         put_swf_end_tag(s);
@@ -427,12 +462,12 @@ static int swf_write_video(AVFormatContext *s,
     swf->swf_frame_number++;
 
     /* streaming sound always should be placed just before showframe tags */
-    if (swf->audio_par && av_fifo_size(swf->audio_fifo)) {
-        int frame_size = av_fifo_size(swf->audio_fifo);
+    if (swf->audio_par && av_fifo_can_read(swf->audio_fifo)) {
+        size_t frame_size = av_fifo_can_read(swf->audio_fifo);
         put_swf_tag(s, TAG_STREAMBLOCK | TAG_LONG);
         avio_wl16(pb, swf->sound_samples);
         avio_wl16(pb, 0); // seek samples
-        av_fifo_generic_read(swf->audio_fifo, pb, frame_size, (void*)avio_write);
+        av_fifo_read_to_cb(swf->audio_fifo, fifo_avio_wrapper, pb, &frame_size);
         put_swf_end_tag(s);
 
         /* update FIFO */
@@ -446,26 +481,26 @@ static int swf_write_video(AVFormatContext *s,
     return 0;
 }
 
-static int swf_write_audio(AVFormatContext *s,
-                           AVCodecParameters *par, uint8_t *buf, int size)
+static int swf_write_audio(AVFormatContext *s, AVCodecParameters *par,
+                           const uint8_t *buf, int size)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
 
     /* Flash Player limit */
     if (swf->swf_frame_number == 16000)
         av_log(s, AV_LOG_INFO, "warning: Flash Player limit of 16000 frames reached\n");
 
-    if (av_fifo_size(swf->audio_fifo) + size > AUDIO_FIFO_SIZE) {
+    if (av_fifo_can_write(swf->audio_fifo) < size) {
         av_log(s, AV_LOG_ERROR, "audio fifo too small to mux audio essence\n");
         return -1;
     }
 
-    av_fifo_generic_write(swf->audio_fifo, buf, size, NULL);
+    av_fifo_write(swf->audio_fifo, buf, size);
     swf->sound_samples += av_get_audio_frame_duration2(par, size);
 
     /* if audio only stream make sure we add swf frames */
     if (!swf->video_par)
-        swf_write_video(s, par, 0, 0);
+        swf_write_video(s, par, 0, 0, 0);
 
     return 0;
 }
@@ -476,31 +511,20 @@ static int swf_write_packet(AVFormatContext *s, AVPacket *pkt)
     if (par->codec_type == AVMEDIA_TYPE_AUDIO)
         return swf_write_audio(s, par, pkt->data, pkt->size);
     else
-        return swf_write_video(s, par, pkt->data, pkt->size);
+        return swf_write_video(s, par, pkt->data, pkt->size, pkt->flags);
 }
 
 static int swf_write_trailer(AVFormatContext *s)
 {
-    SWFContext *swf = s->priv_data;
+    SWFEncContext *swf = s->priv_data;
     AVIOContext *pb = s->pb;
-    AVCodecParameters *par, *video_par;
-    int file_size, i;
-
-    video_par = NULL;
-    for(i=0;i<s->nb_streams;i++) {
-        par = s->streams[i]->codecpar;
-        if (par->codec_type == AVMEDIA_TYPE_VIDEO)
-            video_par = par;
-        else {
-            av_fifo_freep(&swf->audio_fifo);
-        }
-    }
+    int file_size;
 
     put_swf_tag(s, TAG_END);
     put_swf_end_tag(s);
 
     /* patch file size and number of frames if not streamed */
-    if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) && video_par) {
+    if ((s->pb->seekable & AVIO_SEEKABLE_NORMAL) && swf->video_par) {
         file_size = avio_tell(pb);
         avio_seek(pb, 4, SEEK_SET);
         avio_wl32(pb, file_size);
@@ -515,32 +539,41 @@ static int swf_write_trailer(AVFormatContext *s)
     return 0;
 }
 
+static void swf_deinit(AVFormatContext *s)
+{
+    SWFEncContext *swf = s->priv_data;
+
+    av_fifo_freep2(&swf->audio_fifo);
+}
+
 #if CONFIG_SWF_MUXER
-AVOutputFormat ff_swf_muxer = {
+const AVOutputFormat ff_swf_muxer = {
     .name              = "swf",
     .long_name         = NULL_IF_CONFIG_SMALL("SWF (ShockWave Flash)"),
     .mime_type         = "application/x-shockwave-flash",
     .extensions        = "swf",
-    .priv_data_size    = sizeof(SWFContext),
+    .priv_data_size    = sizeof(SWFEncContext),
     .audio_codec       = AV_CODEC_ID_MP3,
     .video_codec       = AV_CODEC_ID_FLV1,
     .write_header      = swf_write_header,
     .write_packet      = swf_write_packet,
     .write_trailer     = swf_write_trailer,
+    .deinit            = swf_deinit,
     .flags             = AVFMT_TS_NONSTRICT,
 };
 #endif
 #if CONFIG_AVM2_MUXER
-AVOutputFormat ff_avm2_muxer = {
+const AVOutputFormat ff_avm2_muxer = {
     .name              = "avm2",
     .long_name         = NULL_IF_CONFIG_SMALL("SWF (ShockWave Flash) (AVM2)"),
     .mime_type         = "application/x-shockwave-flash",
-    .priv_data_size    = sizeof(SWFContext),
+    .priv_data_size    = sizeof(SWFEncContext),
     .audio_codec       = AV_CODEC_ID_MP3,
     .video_codec       = AV_CODEC_ID_FLV1,
     .write_header      = swf_write_header,
     .write_packet      = swf_write_packet,
     .write_trailer     = swf_write_trailer,
+    .deinit            = swf_deinit,
     .flags             = AVFMT_TS_NONSTRICT,
 };
 #endif

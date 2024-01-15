@@ -20,15 +20,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <inttypes.h>
-#include <limits.h>
+#include <stdint.h>
 
+#include "config.h"
 #include "libavutil/avassert.h"
-#include "avcodec.h"
+#include "libavutil/intmath.h"
 #include "mathops.h"
 #include "celp_math.h"
-#include "libavutil/common.h"
 
+#ifdef G729_BITEXACT
 static const uint16_t exp2a[]=
 {
      0,  1435,  2901,  4400,  5931,  7496,  9096, 10730,
@@ -54,6 +54,7 @@ int ff_exp2(uint16_t power)
     result= (result<<3) + ((result*exp2b[(power>>5)&31])>>17);
     return result + ((result*(power&31)*89)>>22);
 }
+#endif
 
 /**
  * Table used to compute log2(x)
@@ -121,6 +122,7 @@ void ff_celp_math_init(CELPMContext *c)
 {
     c->dot_productf   = ff_dot_productf;
 
-    if(HAVE_MIPSFPU)
-        ff_celp_math_init_mips(c);
+#if HAVE_MIPSFPU
+    ff_celp_math_init_mips(c);
+#endif
 }

@@ -36,7 +36,9 @@
 #include "libavutil/opt.h"
 
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "encode.h"
+#include "packet_internal.h"
 
 typedef struct LibkvazaarContext {
     const AVClass *class;
@@ -80,13 +82,8 @@ static av_cold int libkvazaar_init(AVCodecContext *avctx)
     cfg->height = avctx->height;
 
     if (avctx->framerate.num > 0 && avctx->framerate.den > 0) {
-        if (avctx->ticks_per_frame > INT_MAX / avctx->framerate.den) {
-            av_log(avctx, AV_LOG_ERROR,
-                   "Could not set framerate for kvazaar: integer overflow\n");
-            return AVERROR(EINVAL);
-        }
         cfg->framerate_num   = avctx->framerate.num;
-        cfg->framerate_denom = avctx->time_base.den * avctx->ticks_per_frame;
+        cfg->framerate_denom = avctx->framerate.den;
     } else {
         if (avctx->ticks_per_frame > INT_MAX / avctx->time_base.num) {
             av_log(avctx, AV_LOG_ERROR,
@@ -99,6 +96,9 @@ static av_cold int libkvazaar_init(AVCodecContext *avctx)
     cfg->target_bitrate = avctx->bit_rate;
     cfg->vui.sar_width  = avctx->sample_aspect_ratio.num;
     cfg->vui.sar_height = avctx->sample_aspect_ratio.den;
+    if (avctx->bit_rate) {
+        cfg->rc_algorithm = KVZ_LAMBDA;
+    }
 
     if (ctx->kvz_params) {
         AVDictionary *dict = NULL;
@@ -110,8 +110,8 @@ static av_cold int libkvazaar_init(AVCodecContext *avctx)
                            entry->key, entry->value);
                 }
             }
-            av_dict_free(&dict);
         }
+        av_dict_free(&dict);
     }
 
     ctx->encoder = enc = api->encoder_open(cfg);
@@ -157,9 +157,6 @@ static av_cold int libkvazaar_close(AVCodecContext *avctx)
         ctx->api->config_destroy(ctx->config);
     }
 
-    if (avctx->extradata)
-        av_freep(&avctx->extradata);
-
     return 0;
 }
 
@@ -175,6 +172,7 @@ static int libkvazaar_encode(AVCodecContext *avctx,
     kvz_data_chunk *data_out = NULL;
     uint32_t len_out = 0;
     int retval = 0;
+    int pict_type;
 
     *got_packet_ptr = 0;
 
@@ -210,13 +208,19 @@ static int libkvazaar_encode(AVCodecContext *avctx,
 
         // Copy pixels from frame to input_pic.
         {
+            uint8_t *dst[4] = {
+                input_pic->data[0],
+                input_pic->data[1],
+                input_pic->data[2],
+                NULL,
+            };
             int dst_linesizes[4] = {
               frame->width,
               frame->width / 2,
               frame->width / 2,
               0
             };
-            av_image_copy(input_pic->data, dst_linesizes,
+            av_image_copy(dst, dst_linesizes,
                           (const uint8_t **)frame->data, frame->linesize,
                           frame->format, frame->width, frame->height);
         }
@@ -240,7 +244,7 @@ static int libkvazaar_encode(AVCodecContext *avctx,
         kvz_data_chunk *chunk = NULL;
         uint64_t written = 0;
 
-        retval = ff_alloc_packet2(avctx, avpkt, len_out, len_out);
+        retval = ff_get_encode_buffer(avctx, avpkt, len_out, 0);
         if (retval < 0) {
             av_log(avctx, AV_LOG_ERROR, "Failed to allocate output packet.\n");
             goto done;
@@ -261,6 +265,23 @@ static int libkvazaar_encode(AVCodecContext *avctx,
             frame_info.nal_unit_type <= KVZ_NAL_RSV_IRAP_VCL23) {
             avpkt->flags |= AV_PKT_FLAG_KEY;
         }
+
+        switch (frame_info.slice_type) {
+        case KVZ_SLICE_I:
+            pict_type = AV_PICTURE_TYPE_I;
+            break;
+        case KVZ_SLICE_P:
+            pict_type = AV_PICTURE_TYPE_P;
+            break;
+        case KVZ_SLICE_B:
+            pict_type = AV_PICTURE_TYPE_B;
+            break;
+        default:
+            av_log(avctx, AV_LOG_ERROR, "Unknown picture type encountered.\n");
+            return AVERROR_EXTERNAL;
+        }
+
+        ff_side_data_set_encoder_stats(avpkt, frame_info.qp * FF_QP2LAMBDA, NULL, 0, pict_type);
 
         *got_packet_ptr = 1;
     }
@@ -292,28 +313,30 @@ static const AVClass class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-static const AVCodecDefault defaults[] = {
+static const FFCodecDefault defaults[] = {
     { "b", "0" },
     { NULL },
 };
 
-AVCodec ff_libkvazaar_encoder = {
-    .name             = "libkvazaar",
-    .long_name        = NULL_IF_CONFIG_SMALL("libkvazaar H.265 / HEVC"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_HEVC,
-    .capabilities     = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS,
-    .pix_fmts         = pix_fmts,
+const FFCodec ff_libkvazaar_encoder = {
+    .p.name           = "libkvazaar",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("libkvazaar H.265 / HEVC"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_HEVC,
+    .p.capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
+                        AV_CODEC_CAP_OTHER_THREADS,
+    .p.pix_fmts       = pix_fmts,
 
-    .priv_class       = &class,
+    .p.priv_class     = &class,
     .priv_data_size   = sizeof(LibkvazaarContext),
     .defaults         = defaults,
 
     .init             = libkvazaar_init,
-    .encode2          = libkvazaar_encode,
+    FF_CODEC_ENCODE_CB(libkvazaar_encode),
     .close            = libkvazaar_close,
 
-    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP |
+                        FF_CODEC_CAP_AUTO_THREADS,
 
-    .wrapper_name     = "libkvazaar",
+    .p.wrapper_name   = "libkvazaar",
 };

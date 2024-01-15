@@ -21,10 +21,12 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include <vdpau/vdpau.h>
 
 #include "avcodec.h"
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "vc1.h"
 #include "vdpau.h"
 #include "vdpau_internal.h"

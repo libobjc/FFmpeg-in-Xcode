@@ -33,16 +33,9 @@
 #include "fft.h"
 #include "fft-internal.h"
 
-#if FFT_FIXED_32
+#if !FFT_FLOAT
 #include "fft_table.h"
-
-static void av_cold fft_lut_init(void)
-{
-    int n = 0;
-    ff_fft_lut_init(ff_fft_offsets_lut, 0, 1 << 17, &n);
-}
-
-#else /* FFT_FIXED_32 */
+#else /* !FFT_FLOAT */
 
 /* cos(2*pi*x/n) for 0<=x<=n/4, followed by its reverse */
 #if !CONFIG_HARDCODED_TABLES
@@ -120,6 +113,10 @@ static CosTabsInitOnce cos_tabs_init_once[] = {
     { init_ff_cos_tabs_131072, AV_ONCE_INIT },
 };
 
+av_cold void ff_init_ff_cos_tabs(int index)
+{
+    ff_thread_once(&cos_tabs_init_once[index].control, cos_tabs_init_once[index].func);
+}
 #endif
 COSTABLE_CONST FFTSample * const FFT_NAME(ff_cos_tabs)[] = {
     NULL, NULL, NULL, NULL,
@@ -139,7 +136,7 @@ COSTABLE_CONST FFTSample * const FFT_NAME(ff_cos_tabs)[] = {
     FFT_NAME(ff_cos_131072),
 };
 
-#endif /* FFT_FIXED_32 */
+#endif /* FFT_FLOAT */
 
 static void fft_permute_c(FFTContext *s, FFTComplex *z);
 static void fft_calc_c(FFTContext *s, FFTComplex *z);
@@ -155,12 +152,6 @@ static int split_radix_permutation(int i, int n, int inverse)
     else                  return split_radix_permutation(i, m, inverse)*4 - 1;
 }
 
-av_cold void ff_init_ff_cos_tabs(int index)
-{
-#if (!CONFIG_HARDCODED_TABLES) && (!FFT_FIXED_32)
-    ff_thread_once(&cos_tabs_init_once[index].control, cos_tabs_init_once[index].func);
-#endif
-}
 
 static const int avx_tab[] = {
     0, 4, 1, 5, 8, 12, 9, 13, 2, 6, 3, 7, 10, 14, 11, 15
@@ -235,30 +226,28 @@ av_cold int ff_fft_init(FFTContext *s, int nbits, int inverse)
     s->mdct_calc   = ff_mdct_calc_c;
 #endif
 
-#if FFT_FIXED_32
-    {
-        static AVOnce control = AV_ONCE_INIT;
-        ff_thread_once(&control, fft_lut_init);
-    }
-#else /* FFT_FIXED_32 */
 #if FFT_FLOAT
-    if (ARCH_AARCH64) ff_fft_init_aarch64(s);
-    if (ARCH_ARM)     ff_fft_init_arm(s);
-    if (ARCH_PPC)     ff_fft_init_ppc(s);
-    if (ARCH_X86)     ff_fft_init_x86(s);
-    if (CONFIG_MDCT)  s->mdct_calcw = s->mdct_calc;
-    if (HAVE_MIPSFPU) ff_fft_init_mips(s);
-#else
-    if (CONFIG_MDCT)  s->mdct_calcw = ff_mdct_calcw_c;
-    if (ARCH_ARM)     ff_fft_fixed_init_arm(s);
+#if ARCH_AARCH64
+    ff_fft_init_aarch64(s);
+#elif ARCH_ARM
+    ff_fft_init_arm(s);
+#elif ARCH_PPC
+    ff_fft_init_ppc(s);
+#elif ARCH_X86
+    ff_fft_init_x86(s);
+#endif
+#if HAVE_MIPSFPU
+    ff_fft_init_mips(s);
 #endif
     for(j=4; j<=nbits; j++) {
         ff_init_ff_cos_tabs(j);
     }
-#endif /* FFT_FIXED_32 */
+#else /* FFT_FLOAT */
+    ff_fft_lut_init();
+#endif
 
 
-    if (s->fft_permutation == FF_FFT_PERM_AVX) {
+    if (ARCH_X86 && FFT_FLOAT && s->fft_permutation == FF_FFT_PERM_AVX) {
         fft_perm_avx(s);
     } else {
 #define PROCESS_FFT_PERM_SWAP_LSBS(num) do {\
@@ -328,7 +317,7 @@ av_cold void ff_fft_end(FFTContext *s)
     av_freep(&s->tmp_buf);
 }
 
-#if FFT_FIXED_32
+#if !FFT_FLOAT
 
 static void fft_calc_c(FFTContext *s, FFTComplex *z) {
 
@@ -486,7 +475,7 @@ static void fft_calc_c(FFTContext *s, FFTComplex *z) {
     }
 }
 
-#else /* FFT_FIXED_32 */
+#else /* !FFT_FLOAT */
 
 #define BUTTERFLIES(a0,a1,a2,a3) {\
     BF(t3, t5, t5, t1);\
@@ -636,4 +625,4 @@ static void fft_calc_c(FFTContext *s, FFTComplex *z)
 {
     fft_dispatch[s->nbits-2](z);
 }
-#endif /* FFT_FIXED_32 */
+#endif /* !FFT_FLOAT */

@@ -32,6 +32,7 @@
 #include "libavformat/internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/time.h"
+#include "libavutil/wchar_filename.h"
 #include <windows.h>
 
 /**
@@ -245,8 +246,20 @@ gdigrab_read_header(AVFormatContext *s1)
     int ret;
 
     if (!strncmp(filename, "title=", 6)) {
+        wchar_t *name_w = NULL;
         name = filename + 6;
-        hwnd = FindWindow(NULL, name);
+
+        if(utf8towchar(name, &name_w)) {
+            ret = AVERROR(errno);
+            goto error;
+        }
+        if(!name_w) {
+            ret = AVERROR(EINVAL);
+            goto error;
+        }
+
+        hwnd = FindWindowW(NULL, name_w);
+        av_freep(&name_w);
         if (!hwnd) {
             av_log(s1, AV_LOG_ERROR,
                    "Can't find window '%s', aborting.\n", name);
@@ -394,7 +407,7 @@ gdigrab_read_header(AVFormatContext *s1)
     gdigrab->header_size = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) +
                            (bpp <= 8 ? (1 << bpp) : 0) * sizeof(RGBQUAD) /* palette size */;
     gdigrab->time_base   = av_inv_q(gdigrab->framerate);
-    gdigrab->time_frame  = av_gettime() / av_q2d(gdigrab->time_base);
+    gdigrab->time_frame  = av_gettime_relative() / av_q2d(gdigrab->time_base);
 
     gdigrab->hwnd       = hwnd;
     gdigrab->source_hdc = source_hdc;
@@ -551,7 +564,7 @@ static int gdigrab_read_packet(AVFormatContext *s1, AVPacket *pkt)
 
     /* wait based on the frame rate */
     for (;;) {
-        curtime = av_gettime();
+        curtime = av_gettime_relative();
         delay = time_frame * av_q2d(time_base) - curtime;
         if (delay <= 0) {
             if (delay < INT64_C(-1000000) * av_q2d(time_base)) {
@@ -568,7 +581,7 @@ static int gdigrab_read_packet(AVFormatContext *s1, AVPacket *pkt)
 
     if (av_new_packet(pkt, file_size) < 0)
         return AVERROR(ENOMEM);
-    pkt->pts = curtime;
+    pkt->pts = av_gettime();
 
     /* Blit screen grab */
     if (!BitBlt(dest_hdc, 0, 0,
@@ -651,7 +664,7 @@ static const AVClass gdigrab_class = {
 };
 
 /** gdi grabber device demuxer declaration */
-AVInputFormat ff_gdigrab_demuxer = {
+const AVInputFormat ff_gdigrab_demuxer = {
     .name           = "gdigrab",
     .long_name      = NULL_IF_CONFIG_SMALL("GDI API Windows frame grabber"),
     .priv_data_size = sizeof(struct gdigrab),

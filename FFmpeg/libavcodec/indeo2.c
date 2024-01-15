@@ -25,9 +25,11 @@
  */
 
 #include "libavutil/attributes.h"
+#include "libavutil/thread.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "indeo2data.h"
 #include "internal.h"
@@ -46,7 +48,7 @@ static VLC ir2_vlc;
 /* Indeo 2 codes are in range 0x01..0x7F and 0x81..0x90 */
 static inline int ir2_get_code(GetBitContext *gb)
 {
-    return get_vlc2(gb, ir2_vlc.table, CODE_VLC_BITS, 1) + 1;
+    return get_vlc2(gb, ir2_vlc.table, CODE_VLC_BITS, 1);
 }
 
 static int ir2_decode_plane(Ir2Context *ctx, int width, int height, uint8_t *dst,
@@ -79,10 +81,11 @@ static int ir2_decode_plane(Ir2Context *ctx, int width, int height, uint8_t *dst
 
     for (j = 1; j < height; j++) {
         out = 0;
-        if (get_bits_left(&ctx->gb) <= 0)
-            return AVERROR_INVALIDDATA;
         while (out < width) {
-            int c = ir2_get_code(&ctx->gb);
+            int c;
+            if (get_bits_left(&ctx->gb) <= 0)
+                return AVERROR_INVALIDDATA;
+            c = ir2_get_code(&ctx->gb);
             if (c >= 0x80) { /* we have a skip */
                 c -= 0x7F;
                 if (out + c*2 > width)
@@ -123,9 +126,9 @@ static int ir2_decode_plane_inter(Ir2Context *ctx, int width, int height, uint8_
 
     for (j = 0; j < height; j++) {
         out = 0;
-        if (get_bits_left(&ctx->gb) <= 0)
-            return AVERROR_INVALIDDATA;
         while (out < width) {
+            if (get_bits_left(&ctx->gb) <= 0)
+                return AVERROR_INVALIDDATA;
             c = ir2_get_code(&ctx->gb);
             if (c >= 0x80) { /* we have a skip */
                 c   -= 0x7F;
@@ -148,19 +151,17 @@ static int ir2_decode_plane_inter(Ir2Context *ctx, int width, int height, uint8_
     return 0;
 }
 
-static int ir2_decode_frame(AVCodecContext *avctx,
-                        void *data, int *got_frame,
-                        AVPacket *avpkt)
+static int ir2_decode_frame(AVCodecContext *avctx, AVFrame *picture,
+                            int *got_frame, AVPacket *avpkt)
 {
     Ir2Context * const s = avctx->priv_data;
     const uint8_t *buf   = avpkt->data;
     int buf_size         = avpkt->size;
-    AVFrame *picture     = data;
     AVFrame * const p    = s->picture;
     int start, ret;
     int ltab, ctab;
 
-    if ((ret = ff_reget_buffer(avctx, p)) < 0)
+    if ((ret = ff_reget_buffer(avctx, p, 0)) < 0)
         return ret;
 
     start = 48; /* hardcoded for now */
@@ -173,10 +174,6 @@ static int ir2_decode_frame(AVCodecContext *avctx,
     s->decode_delta = buf[18];
 
     /* decide whether frame uses deltas or not */
-#ifndef BITSTREAM_READER_LE
-    for (i = 0; i < buf_size; i++)
-        buf[i] = ff_reverse[buf[i]];
-#endif
 
     if ((ret = init_get_bits8(&s->gb, buf + start, buf_size - start)) < 0)
         return ret;
@@ -228,10 +225,17 @@ static int ir2_decode_frame(AVCodecContext *avctx,
     return buf_size;
 }
 
+static av_cold void ir2_init_static(void)
+{
+    INIT_VLC_STATIC_FROM_LENGTHS(&ir2_vlc, CODE_VLC_BITS, IR2_CODES,
+                                 &ir2_tab[0][1], 2, &ir2_tab[0][0], 2, 1,
+                                 0, INIT_VLC_OUTPUT_LE, 1 << CODE_VLC_BITS);
+}
+
 static av_cold int ir2_decode_init(AVCodecContext *avctx)
 {
+    static AVOnce init_static_once = AV_ONCE_INIT;
     Ir2Context * const ic = avctx->priv_data;
-    static VLC_TYPE vlc_tables[1 << CODE_VLC_BITS][2];
 
     ic->avctx = avctx;
 
@@ -241,17 +245,7 @@ static av_cold int ir2_decode_init(AVCodecContext *avctx)
     if (!ic->picture)
         return AVERROR(ENOMEM);
 
-    ir2_vlc.table = vlc_tables;
-    ir2_vlc.table_allocated = 1 << CODE_VLC_BITS;
-#ifdef BITSTREAM_READER_LE
-        init_vlc(&ir2_vlc, CODE_VLC_BITS, IR2_CODES,
-                 &ir2_codes[0][1], 4, 2,
-                 &ir2_codes[0][0], 4, 2, INIT_VLC_USE_NEW_STATIC | INIT_VLC_LE);
-#else
-        init_vlc(&ir2_vlc, CODE_VLC_BITS, IR2_CODES,
-                 &ir2_codes[0][1], 4, 2,
-                 &ir2_codes[0][0], 4, 2, INIT_VLC_USE_NEW_STATIC);
-#endif
+    ff_thread_once(&init_static_once, ir2_init_static);
 
     return 0;
 }
@@ -265,14 +259,15 @@ static av_cold int ir2_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_indeo2_decoder = {
-    .name           = "indeo2",
-    .long_name      = NULL_IF_CONFIG_SMALL("Intel Indeo 2"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_INDEO2,
+const FFCodec ff_indeo2_decoder = {
+    .p.name         = "indeo2",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Intel Indeo 2"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_INDEO2,
     .priv_data_size = sizeof(Ir2Context),
     .init           = ir2_decode_init,
     .close          = ir2_decode_end,
-    .decode         = ir2_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(ir2_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

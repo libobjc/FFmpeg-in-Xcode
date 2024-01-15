@@ -20,8 +20,9 @@
 
 #include "libavutil/common.h"
 #include "libavutil/intreadwrite.h"
-#include "avcodec.h"
 #include "bsf.h"
+#include "bsf_internal.h"
+#include "defs.h"
 #include "mpegaudiodecheader.h"
 #include "mpegaudiodata.h"
 
@@ -62,10 +63,15 @@ static int mp3_header_decompress(AVBSFContext *ctx, AVPacket *out)
     lsf     = sample_rate < (24000+32000)/2;
     mpeg25  = sample_rate < (12000+16000)/2;
     sample_rate_index= (header>>10)&3;
-    sample_rate= avpriv_mpa_freq_tab[sample_rate_index] >> (lsf + mpeg25); //in case sample rate is a little off
+    if (sample_rate_index == 3) {
+        ret = AVERROR_INVALIDDATA;
+        goto fail;
+    }
+
+    sample_rate = ff_mpa_freq_tab[sample_rate_index] >> (lsf + mpeg25); //in case sample rate is a little off
 
     for(bitrate_index=2; bitrate_index<30; bitrate_index++){
-        frame_size = avpriv_mpa_bitrate_tab[lsf][2][bitrate_index>>1];
+        frame_size = ff_mpa_bitrate_tab[lsf][2][bitrate_index>>1];
         frame_size = (frame_size * 144000) / (sample_rate << lsf) + (bitrate_index&1);
         if(frame_size == buf_size + 4)
             break;
@@ -92,7 +98,7 @@ static int mp3_header_decompress(AVBSFContext *ctx, AVPacket *out)
     }
     memcpy(out->data + frame_size - buf_size, buf, buf_size + AV_INPUT_BUFFER_PADDING_SIZE);
 
-    if(ctx->par_in->channels==2){
+    if (ctx->par_in->ch_layout.nb_channels == 2){
         uint8_t *p= out->data + frame_size - buf_size;
         if(lsf){
             FFSWAP(int, p[1], p[2]);
@@ -117,8 +123,8 @@ static const enum AVCodecID codec_ids[] = {
     AV_CODEC_ID_MP3, AV_CODEC_ID_NONE,
 };
 
-const AVBitStreamFilter ff_mp3_header_decompress_bsf = {
-    .name      = "mp3decomp",
-    .filter    = mp3_header_decompress,
-    .codec_ids = codec_ids,
+const FFBitStreamFilter ff_mp3_header_decompress_bsf = {
+    .p.name      = "mp3decomp",
+    .p.codec_ids = codec_ids,
+    .filter      = mp3_header_decompress,
 };

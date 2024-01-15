@@ -60,7 +60,7 @@ static int64_t read_ts(const char *s)
 static int webvtt_read_header(AVFormatContext *s)
 {
     WebVTTContext *webvtt = s->priv_data;
-    AVBPrint header, cue;
+    AVBPrint cue;
     int res = 0;
     AVStream *st = avformat_new_stream(s, NULL);
 
@@ -71,7 +71,6 @@ static int webvtt_read_header(AVFormatContext *s)
     st->codecpar->codec_id   = AV_CODEC_ID_WEBVTT;
     st->disposition |= webvtt->kind;
 
-    av_bprint_init(&header, 0, AV_BPRINT_SIZE_UNLIMITED);
     av_bprint_init(&cue,    0, AV_BPRINT_SIZE_UNLIMITED);
 
     for (;;) {
@@ -79,7 +78,7 @@ static int webvtt_read_header(AVFormatContext *s)
         int64_t pos;
         AVPacket *sub;
         const char *p, *identifier, *settings;
-        int identifier_len, settings_len;
+        size_t identifier_len, settings_len;
         int64_t ts_start, ts_end;
 
         ff_subtitles_read_chunk(s->pb, &cue);
@@ -126,7 +125,7 @@ static int webvtt_read_header(AVFormatContext *s)
             break;
 
         /* optional cue settings */
-        p += strcspn(p, "\n\t ");
+        p += strcspn(p, "\n\r\t ");
         while (*p == '\t' || *p == ' ')
             p++;
         settings = p;
@@ -166,7 +165,6 @@ static int webvtt_read_header(AVFormatContext *s)
 
 end:
     av_bprint_finalize(&cue,    NULL);
-    av_bprint_finalize(&header, NULL);
     return res;
 }
 
@@ -210,10 +208,11 @@ static const AVClass webvtt_demuxer_class = {
     .version     = LIBAVUTIL_VERSION_INT,
 };
 
-AVInputFormat ff_webvtt_demuxer = {
+const AVInputFormat ff_webvtt_demuxer = {
     .name           = "webvtt",
     .long_name      = NULL_IF_CONFIG_SMALL("WebVTT subtitle"),
     .priv_data_size = sizeof(WebVTTContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = webvtt_probe,
     .read_header    = webvtt_read_header,
     .read_packet    = webvtt_read_packet,

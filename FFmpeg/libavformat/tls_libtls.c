@@ -44,8 +44,7 @@ static int ff_tls_close(URLContext *h)
         tls_close(p->ctx);
         tls_free(p->ctx);
     }
-    if (p->tls_shared.tcp)
-        ffurl_close(p->tls_shared.tcp);
+    ffurl_closep(&p->tls_shared.tcp);
     return 0;
 }
 
@@ -159,6 +158,8 @@ static int ff_tls_read(URLContext *h, uint8_t *buf, int size)
         return ret;
     else if (ret == 0)
         return AVERROR_EOF;
+    else if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT)
+        return AVERROR(EAGAIN);
     av_log(h, AV_LOG_ERROR, "%s\n", tls_error(p->ctx));
     return AVERROR(EIO);
 }
@@ -172,6 +173,8 @@ static int ff_tls_write(URLContext *h, const uint8_t *buf, int size)
         return ret;
     else if (ret == 0)
         return AVERROR_EOF;
+    else if (ret == TLS_WANT_POLLIN || ret == TLS_WANT_POLLOUT)
+        return AVERROR(EAGAIN);
     av_log(h, AV_LOG_ERROR, "%s\n", tls_error(p->ctx));
     return AVERROR(EIO);
 }
@@ -180,6 +183,12 @@ static int tls_get_file_handle(URLContext *h)
 {
     TLSContext *c = h->priv_data;
     return ffurl_get_file_handle(c->tls_shared.tcp);
+}
+
+static int tls_get_short_seek(URLContext *h)
+{
+    TLSContext *s = h->priv_data;
+    return ffurl_get_short_seek(s->tls_shared.tcp);
 }
 
 static const AVOption options[] = {
@@ -201,6 +210,7 @@ const URLProtocol ff_tls_protocol = {
     .url_write      = ff_tls_write,
     .url_close      = ff_tls_close,
     .url_get_file_handle = tls_get_file_handle,
+    .url_get_short_seek  = tls_get_short_seek,
     .priv_data_size = sizeof(TLSContext),
     .flags          = URL_PROTOCOL_FLAG_NETWORK,
     .priv_data_class = &tls_class,

@@ -37,10 +37,6 @@
 static av_cold void aacsbr_tableinit(void)
 {
     int n;
-    for (n = 1; n < 320; n++)
-        sbr_qmf_window_us[320 + n] = sbr_qmf_window_us[320 - n];
-    sbr_qmf_window_us[384] = -sbr_qmf_window_us[384];
-    sbr_qmf_window_us[512] = -sbr_qmf_window_us[512];
 
     for (n = 0; n < 320; n++)
         sbr_qmf_window_ds[n] = sbr_qmf_window_us[2*n];
@@ -815,7 +811,7 @@ static int read_sbr_envelope(AACContext *ac, SpectralBandReplication *sbr, GetBi
 {
     int bits;
     int i, j, k;
-    VLC_TYPE (*t_huff)[2], (*f_huff)[2];
+    const VLCElem *t_huff, *f_huff;
     int t_lav, f_lav;
     const int delta = (ch == 1 && sbr->bs_coupling == 1) + 1;
     const int odd = sbr->n[1] & 1;
@@ -903,7 +899,7 @@ static int read_sbr_noise(AACContext *ac, SpectralBandReplication *sbr, GetBitCo
                            SBRData *ch_data, int ch)
 {
     int i, j;
-    VLC_TYPE (*t_huff)[2], (*f_huff)[2];
+    const VLCElem *t_huff, *f_huff;
     int t_lav, f_lav;
     int delta = (ch == 1 && sbr->bs_coupling == 1) + 1;
 
@@ -957,7 +953,7 @@ static void read_sbr_extension(AACContext *ac, SpectralBandReplication *sbr,
             skip_bits_long(gb, *num_bits_left); // bs_fill_bits
             *num_bits_left = 0;
         } else {
-            *num_bits_left -= AAC_RENAME(ff_ps_read_data)(ac->avctx, gb, &sbr->ps, *num_bits_left);
+            *num_bits_left -= ff_ps_read_data(ac->avctx, gb, &sbr->ps.common, *num_bits_left);
             ac->avctx->profile = FF_PROFILE_AAC_HE_V2;
         }
         break;
@@ -1548,7 +1544,7 @@ void AAC_RENAME(ff_sbr_apply)(AACContext *ac, SpectralBandReplication *sbr, int 
     }
 
     if (ac->oc[1].m4ac.ps == 1) {
-        if (sbr->ps.start) {
+        if (sbr->ps.common.start) {
             AAC_RENAME(ff_ps_apply)(ac->avctx, &sbr->ps, sbr->X[0], sbr->X[1], sbr->kx[1] + sbr->m[1]);
         } else {
             memcpy(sbr->X[1], sbr->X[0], sizeof(sbr->X[0]));
@@ -1577,7 +1573,8 @@ static void aacsbr_func_ptr_init(AACSBRContext *c)
     c->sbr_hf_inverse_filter = sbr_hf_inverse_filter;
 
 #if !USE_FIXED
-    if(ARCH_MIPS)
-        ff_aacsbr_func_ptr_init_mips(c);
+#if ARCH_MIPS
+    ff_aacsbr_func_ptr_init_mips(c);
+#endif
 #endif
 }

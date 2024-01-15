@@ -42,6 +42,7 @@ static int opus_header(AVFormatContext *avf, int idx)
     AVStream *st                 = avf->streams[idx];
     struct oggopus_private *priv = os->private;
     uint8_t *packet              = os->buf + os->pstart;
+    int ret;
 
     if (!priv) {
         priv = os->private = av_mallocz(sizeof(*priv));
@@ -54,17 +55,17 @@ static int opus_header(AVFormatContext *avf, int idx)
             return AVERROR_INVALIDDATA;
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id   = AV_CODEC_ID_OPUS;
-        st->codecpar->channels   = AV_RL8(packet + 9);
+        st->codecpar->ch_layout.nb_channels = AV_RL8(packet + 9);
 
         priv->pre_skip        = AV_RL16(packet + 10);
         st->codecpar->initial_padding = priv->pre_skip;
+        os->start_trimming = priv->pre_skip;
         /*orig_sample_rate    = AV_RL32(packet + 12);*/
         /*gain                = AV_RL16(packet + 16);*/
         /*channel_map         = AV_RL8 (packet + 18);*/
 
-        av_freep(&st->codecpar->extradata);
-        if (ff_alloc_extradata(st->codecpar, os->psize))
-            return AVERROR(ENOMEM);
+        if ((ret = ff_alloc_extradata(st->codecpar, os->psize)) < 0)
+            return ret;
 
         memcpy(st->codecpar->extradata, packet, os->psize);
 

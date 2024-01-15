@@ -19,10 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavcodec/bytestream.h"
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
 #include "avio.h"
+#include "demux.h"
 #include "internal.h"
 
 static const AVCodecTag rsd_tags[] = {
@@ -81,9 +81,9 @@ static int rsd_read_header(AVFormatContext *s)
         return AVERROR_INVALIDDATA;
     }
 
-    par->channels = avio_rl32(pb);
-    if (par->channels <= 0 || par->channels > INT_MAX / 36) {
-        av_log(s, AV_LOG_ERROR, "Invalid number of channels: %d\n", par->channels);
+    par->ch_layout.nb_channels = avio_rl32(pb);
+    if (par->ch_layout.nb_channels <= 0 || par->ch_layout.nb_channels > INT_MAX / 36) {
+        av_log(s, AV_LOG_ERROR, "Invalid number of channels: %d\n", par->ch_layout.nb_channels);
         return AVERROR_INVALIDDATA;
     }
 
@@ -97,29 +97,22 @@ static int rsd_read_header(AVFormatContext *s)
     switch (par->codec_id) {
     case AV_CODEC_ID_XMA2:
         par->block_align = 2048;
-        ff_alloc_extradata(par, 34);
-        if (!par->extradata)
-            return AVERROR(ENOMEM);
+        if ((ret = ff_alloc_extradata(par, 34)) < 0)
+            return ret;
         memset(par->extradata, 0, 34);
         break;
     case AV_CODEC_ID_ADPCM_PSX:
-        par->block_align = 16 * par->channels;
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = av_get_audio_frame_duration2(par, avio_size(pb) - start);
+        par->block_align = 16 * par->ch_layout.nb_channels;
         break;
     case AV_CODEC_ID_ADPCM_IMA_RAD:
-        par->block_align = 20 * par->channels;
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = av_get_audio_frame_duration2(par, avio_size(pb) - start);
+        par->block_align = 20 * par->ch_layout.nb_channels;
         break;
     case AV_CODEC_ID_ADPCM_IMA_WAV:
         if (version == 2)
             start = avio_rl32(pb);
 
         par->bits_per_coded_sample = 4;
-        par->block_align = 36 * par->channels;
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = av_get_audio_frame_duration2(par, avio_size(pb) - start);
+        par->block_align = 36 * par->ch_layout.nb_channels;
         break;
     case AV_CODEC_ID_ADPCM_THP_LE:
         /* RSD3GADP is mono, so only alloc enough memory
@@ -129,31 +122,49 @@ static int rsd_read_header(AVFormatContext *s)
 
         if ((ret = ff_get_extradata(s, par, s->pb, 32)) < 0)
             return ret;
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = av_get_audio_frame_duration2(par, avio_size(pb) - start);
         break;
     case AV_CODEC_ID_ADPCM_THP:
-        par->block_align = 8 * par->channels;
+        par->block_align = 8 * par->ch_layout.nb_channels;
         avio_skip(s->pb, 0x1A4 - avio_tell(s->pb));
 
-        if ((ret = ff_alloc_extradata(st->codecpar, 32 * par->channels)) < 0)
+        if ((ret = ff_alloc_extradata(st->codecpar, 32 * par->ch_layout.nb_channels)) < 0)
             return ret;
 
-        for (i = 0; i < par->channels; i++) {
+        for (i = 0; i < par->ch_layout.nb_channels; i++) {
+            if (avio_feof(pb))
+                return AVERROR_EOF;
             avio_read(s->pb, st->codecpar->extradata + 32 * i, 32);
             avio_skip(s->pb, 8);
         }
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = (avio_size(pb) - start) / (8 * par->channels) * 14;
         break;
     case AV_CODEC_ID_PCM_S16LE:
     case AV_CODEC_ID_PCM_S16BE:
         if (version != 4)
             start = avio_rl32(pb);
 
-        if (pb->seekable & AVIO_SEEKABLE_NORMAL)
-            st->duration = (avio_size(pb) - start) / 2 / par->channels;
         break;
+    }
+    if (start < 0)
+        return AVERROR_INVALIDDATA;
+
+    if (pb->seekable & AVIO_SEEKABLE_NORMAL) {
+        int64_t remaining = avio_size(pb);
+
+        if (remaining >= start && remaining - start <= INT_MAX)
+            switch (par->codec_id) {
+            case AV_CODEC_ID_ADPCM_PSX:
+            case AV_CODEC_ID_ADPCM_IMA_RAD:
+            case AV_CODEC_ID_ADPCM_IMA_WAV:
+            case AV_CODEC_ID_ADPCM_THP_LE:
+                st->duration = av_get_audio_frame_duration2(par, remaining - start);
+                break;
+            case AV_CODEC_ID_ADPCM_THP:
+                st->duration = (remaining - start) / (8 * par->ch_layout.nb_channels) * 14;
+                break;
+            case AV_CODEC_ID_PCM_S16LE:
+            case AV_CODEC_ID_PCM_S16BE:
+                st->duration = (remaining - start) / 2 / par->ch_layout.nb_channels;
+            }
     }
 
     avio_skip(pb, start - avio_tell(pb));
@@ -183,14 +194,14 @@ static int rsd_read_packet(AVFormatContext *s, AVPacket *pkt)
         par->codec_id == AV_CODEC_ID_XMA2) {
         ret = av_get_packet(s->pb, pkt, par->block_align);
     } else if (par->codec_tag == MKTAG('W','A','D','P') &&
-               par->channels > 1) {
+               par->ch_layout.nb_channels > 1) {
         int i, ch;
 
         ret = av_new_packet(pkt, par->block_align);
         if (ret < 0)
             return ret;
         for (i = 0; i < 4; i++) {
-            for (ch = 0; ch < par->channels; ch++) {
+            for (ch = 0; ch < par->ch_layout.nb_channels; ch++) {
                 pkt->data[ch * 8 + i * 2 + 0] = avio_r8(s->pb);
                 pkt->data[ch * 8 + i * 2 + 1] = avio_r8(s->pb);
             }
@@ -209,7 +220,7 @@ static int rsd_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-AVInputFormat ff_rsd_demuxer = {
+const AVInputFormat ff_rsd_demuxer = {
     .name           =   "rsd",
     .long_name      =   NULL_IF_CONFIG_SMALL("GameCube RSD"),
     .read_probe     =   rsd_probe,

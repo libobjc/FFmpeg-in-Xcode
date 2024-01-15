@@ -23,7 +23,8 @@
 #define AVCODEC_RA288_H
 
 #include <stdint.h>
-#include "libavutil/common.h"
+#include "libavutil/macros.h"
+#include "libavutil/mem_internal.h"
 
 static const float amptable[8]={
      0.515625,  0.90234375,  1.57910156,  2.76342773,

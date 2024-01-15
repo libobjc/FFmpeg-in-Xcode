@@ -31,6 +31,7 @@
  */
 
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "internal.h"
 #include <float.h>
 #include "libavutil/intreadwrite.h"
@@ -63,7 +64,7 @@ static int fill_data_min_max(const uint8_t *ptr8, FITSHeader *header, const uint
     int i, j;
 
     header->data_min = DBL_MAX;
-    header->data_max = DBL_MIN;
+    header->data_max = -DBL_MAX;
     switch (header->bitpix) {
 #define CASE_N(a, t, rd) \
     case a: \
@@ -143,7 +144,7 @@ static int fits_read_header(AVCodecContext *avctx, const uint8_t **ptr, FITSHead
 
     size = abs(header->bitpix) >> 3;
     for (i = 0; i < header->naxis; i++) {
-        if (size && header->naxisn[i] > SIZE_MAX / size) {
+        if (size == 0 || header->naxisn[i] > SIZE_MAX / size) {
             av_log(avctx, AV_LOG_ERROR, "unsupported size of FITS image");
             return AVERROR_INVALIDDATA;
         }
@@ -180,9 +181,9 @@ static int fits_read_header(AVCodecContext *avctx, const uint8_t **ptr, FITSHead
     return 0;
 }
 
-static int fits_decode_frame(AVCodecContext *avctx, void *data, int *got_frame, AVPacket *avpkt)
+static int fits_decode_frame(AVCodecContext *avctx, AVFrame *p,
+                             int *got_frame, AVPacket *avpkt)
 {
-    AVFrame *p=data;
     const uint8_t *ptr8 = avpkt->data, *end;
     uint8_t t8;
     int16_t t16;
@@ -264,6 +265,13 @@ static int fits_decode_frame(AVCodecContext *avctx, void *data, int *got_frame, 
             CASE_RGB(16, dst16, uint16_t, AV_RB16);
         }
     } else {
+        double scale = header.data_max - header.data_min;
+
+        if (scale <= 0 || !isfinite(scale)) {
+            scale = 1;
+        }
+        scale = 1/scale;
+
         switch (header.bitpix) {
 #define CASE_GRAY(cas, dst, type, t, rd) \
     case cas: \
@@ -272,7 +280,7 @@ static int fits_decode_frame(AVCodecContext *avctx, void *data, int *got_frame, 
             for (j = 0; j < avctx->width; j++) { \
                 t = rd; \
                 if (!header.blank_found || t != header.blank) { \
-                    *dst++ = ((t - header.data_min) * ((1 << (sizeof(type) * 8)) - 1)) / (header.data_max - header.data_min); \
+                    *dst++ = lrint(((t - header.data_min) * ((1 << (sizeof(type) * 8)) - 1)) * scale); \
                 } else { \
                     *dst++ = fitsctx->blank_val; \
                 } \
@@ -313,13 +321,13 @@ static const AVClass fits_decoder_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_fits_decoder = {
-    .name           = "fits",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_FITS,
+const FFCodec ff_fits_decoder = {
+    .p.name         = "fits",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_FITS,
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Flexible Image Transport System"),
+    .p.priv_class   = &fits_decoder_class,
     .priv_data_size = sizeof(FITSContext),
-    .decode         = fits_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
-    .long_name      = NULL_IF_CONFIG_SMALL("Flexible Image Transport System"),
-    .priv_class     = &fits_decoder_class
+    FF_CODEC_DECODE_CB(fits_decode_frame),
 };

@@ -19,9 +19,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/error.h"
-#include "libavcodec/avcodec.h"
+#include <stddef.h>
+#include "config.h"
+#include "config_components.h"
+#include "libavutil/macros.h"
 #include "avformat.h"
+#include "internal.h"
+#include "metadata.h"
 #include "riff.h"
 
 /* Note: When encoding, the first matching tag is used, so order is
@@ -403,6 +407,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'H', '0') },
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'H', '2') },
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'L', 'H', '4') },
+    { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'Q', 'Y', '0') },
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'Q', 'Y', '2') },
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'Q', 'R', 'A') },
     { AV_CODEC_ID_UTVIDEO,      MKTAG('U', 'Q', 'R', 'G') },
@@ -453,6 +458,7 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'R', 'A') },
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'R', 'G') },
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'G', '0') },
+    { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'Y', '0') },
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'Y', '2') },
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '0', 'Y', '4') },
     { AV_CODEC_ID_MAGICYUV,     MKTAG('M', '2', 'R', 'A') },
@@ -488,6 +494,17 @@ const AVCodecTag ff_codec_bmp_tags[] = {
     { AV_CODEC_ID_AGM,          MKTAG('A', 'G', 'M', '6') },
     { AV_CODEC_ID_AGM,          MKTAG('A', 'G', 'M', '7') },
     { AV_CODEC_ID_LSCR,         MKTAG('L', 'S', 'C', 'R') },
+    { AV_CODEC_ID_IMM5,         MKTAG('I', 'M', 'M', '5') },
+    { AV_CODEC_ID_MVDV,         MKTAG('M', 'V', 'D', 'V') },
+    { AV_CODEC_ID_MVHA,         MKTAG('M', 'V', 'H', 'A') },
+    { AV_CODEC_ID_MV30,         MKTAG('M', 'V', '3', '0') },
+    { AV_CODEC_ID_NOTCHLC,      MKTAG('n', 'l', 'c', '1') },
+    { AV_CODEC_ID_NONE,         0 }
+};
+
+const AVCodecTag ff_codec_bmp_tags_unofficial[] = {
+    { AV_CODEC_ID_HEVC,         MKTAG('H', 'E', 'V', 'C') },
+    { AV_CODEC_ID_HEVC,         MKTAG('H', '2', '6', '5') },
     { AV_CODEC_ID_NONE,         0 }
 };
 
@@ -508,7 +525,7 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_ADPCM_IMA_OKI,   0x0010 },
     { AV_CODEC_ID_ADPCM_IMA_WAV,   0x0011 },
     /* must come after adpcm_ima_wav in this list */
-    { AV_CODEC_ID_PCM_ZORK,        0x0011 },
+    { AV_CODEC_ID_ADPCM_ZORK,      0x0011 },
     { AV_CODEC_ID_ADPCM_IMA_OKI,   0x0017 },
     { AV_CODEC_ID_ADPCM_YAMAHA,    0x0020 },
     { AV_CODEC_ID_TRUESPEECH,      0x0022 },
@@ -534,6 +551,7 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_AAC,             0x00ff },
     { AV_CODEC_ID_G723_1,          0x0111 },
     { AV_CODEC_ID_SIPR,            0x0130 },
+    { AV_CODEC_ID_ACELP_KELVIN,    0x0135 },
     { AV_CODEC_ID_WMAV1,           0x0160 },
     { AV_CODEC_ID_WMAV2,           0x0161 },
     { AV_CODEC_ID_WMAPRO,          0x0162 },
@@ -544,6 +562,7 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_DVAUDIO,         0x0215 },
     { AV_CODEC_ID_DVAUDIO,         0x0216 },
     { AV_CODEC_ID_ATRAC3,          0x0270 },
+    { AV_CODEC_ID_MSNSIREN,        0x028E },
     { AV_CODEC_ID_ADPCM_G722,      0x028F },
     { AV_CODEC_ID_IMC,             0x0401 },
     { AV_CODEC_ID_IAC,             0x0402 },
@@ -569,11 +588,23 @@ const AVCodecTag ff_codec_wav_tags[] = {
     { AV_CODEC_ID_AAC,             0xA106 },
     { AV_CODEC_ID_SPEEX,           0xA109 },
     { AV_CODEC_ID_FLAC,            0xF1AC },
+    /* DFPWM does not have an assigned format tag; it uses a GUID in WAVEFORMATEX instead */
+    { AV_CODEC_ID_DFPWM,           0xFFFE },
     { AV_CODEC_ID_ADPCM_SWF,       ('S' << 8) + 'F' },
     /* HACK/FIXME: Does Vorbis in WAV/AVI have an (in)official ID? */
     { AV_CODEC_ID_VORBIS,          ('V' << 8) + 'o' },
     { AV_CODEC_ID_NONE,      0 },
 };
+
+#if CONFIG_AVI_MUXER || CONFIG_WTV_MUXER
+const AVCodecTag *const ff_riff_codec_tags_list[] = {
+    ff_codec_bmp_tags, ff_codec_wav_tags, NULL
+};
+#endif
+
+#if CONFIG_WAV_DEMUXER || CONFIG_WAV_MUXER || CONFIG_W64_DEMUXER || CONFIG_W64_MUXER
+const AVCodecTag *const ff_wav_codec_tags_list[] = { ff_codec_wav_tags, NULL };
+#endif
 
 const AVMetadataConv ff_riff_info_conv[] = {
     { "IART", "artist"     },
@@ -609,5 +640,6 @@ const AVCodecGuid ff_codec_wav_guids[] = {
     { AV_CODEC_ID_EAC3,     { 0xAF, 0x87, 0xFB, 0xA7, 0x02, 0x2D, 0xFB, 0x42, 0xA4, 0xD4, 0x05, 0xCD, 0x93, 0x84, 0x3B, 0xDD } },
     { AV_CODEC_ID_MP2,      { 0x2B, 0x80, 0x6D, 0xE0, 0x46, 0xDB, 0xCF, 0x11, 0xB4, 0xD1, 0x00, 0x80, 0x5F, 0x6C, 0xBB, 0xEA } },
     { AV_CODEC_ID_ADPCM_AGM,{ 0x82, 0xEC, 0x1F, 0x6A, 0xCA, 0xDB, 0x19, 0x45, 0xBD, 0xE7, 0x56, 0xD3, 0xB3, 0xEF, 0x98, 0x1D } },
+    { AV_CODEC_ID_DFPWM,    { 0x3A, 0xC1, 0xFA, 0x38, 0x81, 0x1D, 0x43, 0x61, 0xA4, 0x0D, 0xCE, 0x53, 0xCA, 0x60, 0x7C, 0xD1 } },
     { AV_CODEC_ID_NONE }
 };

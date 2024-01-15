@@ -191,15 +191,16 @@ static av_always_inline int scaleforopp(VC1Context *v, int n /* MV */,
     n >>= hpel;
     if (v->s.pict_type == AV_PICTURE_TYPE_B && !v->second_field && dir == 1) {
         if (dim)
-            n = scaleforopp_y(v, n, dir) << hpel;
+            n = scaleforopp_y(v, n, dir) * (1 << hpel);
         else
-            n = scaleforopp_x(v, n) << hpel;
+            n = scaleforopp_x(v, n)      * (1 << hpel);
         return n;
     }
     if (v->s.pict_type != AV_PICTURE_TYPE_B)
-        refdist = FFMIN(v->refdist, 3);
+        refdist = v->refdist;
     else
         refdist = dir ? v->brfd : v->frfd;
+    refdist = FFMIN(refdist, 3);
     scaleopp = ff_vc1_field_mvpred_scales[dir ^ v->second_field][0][refdist];
 
     n = (n * scaleopp >> 8) * (1 << hpel);
@@ -467,7 +468,7 @@ void ff_vc1_pred_mv(VC1Context *v, int n, int dmv_x, int dmv_y,
 /** Predict and set motion vector for interlaced frame picture MBs
  */
 void ff_vc1_pred_mv_intfr(VC1Context *v, int n, int dmv_x, int dmv_y,
-                          int mvn, int r_x, int r_y, uint8_t* is_intra, int dir)
+                          int mvn, int r_x, int r_y, int dir)
 {
     MpegEncContext *s = &v->s;
     int xy, wrap, off = 0;

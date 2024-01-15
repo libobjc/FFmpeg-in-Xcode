@@ -28,10 +28,13 @@
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
+#include "encode.h"
 #include "put_bits.h"
-#include "internal.h"
 #include "thread.h"
 #include "lossless_videoencdsp.h"
+
+#define MAGICYUV_EXTRADATA_SIZE 32
 
 typedef enum Prediction {
     LEFT = 1,
@@ -40,7 +43,6 @@ typedef enum Prediction {
 } Prediction;
 
 typedef struct HuffEntry {
-    uint8_t  sym;
     uint8_t  len;
     uint32_t code;
 } HuffEntry;
@@ -56,7 +58,6 @@ typedef struct MagicYUVContext {
     PutBitContext        pb;
     int                  planes;
     uint8_t              format;
-    AVFrame             *p;
     int                  slice_height;
     int                  nb_slices;
     int                  correlate;
@@ -65,14 +66,15 @@ typedef struct MagicYUVContext {
     uint8_t             *slices[4];
     unsigned             slice_pos[4];
     unsigned             tables_size;
+    uint8_t             *decorrelate_buf[2];
     HuffEntry            he[4][256];
     LLVidEncDSPContext   llvidencdsp;
-    void (*predict)(struct MagicYUVContext *s, uint8_t *src, uint8_t *dst,
+    void (*predict)(struct MagicYUVContext *s, const uint8_t *src, uint8_t *dst,
                     ptrdiff_t stride, int width, int height);
 } MagicYUVContext;
 
 static void left_predict(MagicYUVContext *s,
-                         uint8_t *src, uint8_t *dst, ptrdiff_t stride,
+                         const uint8_t *src, uint8_t *dst, ptrdiff_t stride,
                          int width, int height)
 {
     uint8_t prev = 0;
@@ -96,7 +98,7 @@ static void left_predict(MagicYUVContext *s,
 }
 
 static void gradient_predict(MagicYUVContext *s,
-                             uint8_t *src, uint8_t *dst, ptrdiff_t stride,
+                             const uint8_t *src, uint8_t *dst, ptrdiff_t stride,
                              int width, int height)
 {
     int left = 0, top, lefttop;
@@ -124,7 +126,7 @@ static void gradient_predict(MagicYUVContext *s,
 }
 
 static void median_predict(MagicYUVContext *s,
-                           uint8_t *src, uint8_t *dst, ptrdiff_t stride,
+                           const uint8_t *src, uint8_t *dst, ptrdiff_t stride,
                            int width, int height)
 {
     int left = 0, lefttop;
@@ -187,10 +189,12 @@ static av_cold int magy_encode_init(AVCodecContext *avctx)
         avctx->codec_tag = MKTAG('M', '8', 'G', '0');
         s->format = 0x6b;
         break;
-    default:
-        av_log(avctx, AV_LOG_ERROR, "Unsupported pixel format: %d\n",
-               avctx->pix_fmt);
-        return AVERROR_INVALIDDATA;
+    }
+    if (s->correlate) {
+        s->decorrelate_buf[0] = av_calloc(2U * avctx->height, FFALIGN(avctx->width, 16));
+        if (!s->decorrelate_buf[0])
+            return AVERROR(ENOMEM);
+        s->decorrelate_buf[1] = s->decorrelate_buf[0] + avctx->height * FFALIGN(avctx->width, 16);
     }
 
     ff_llvidencdsp_init(&s->llvidencdsp);
@@ -214,7 +218,7 @@ static av_cold int magy_encode_init(AVCodecContext *avctx)
     case MEDIAN:   s->predict = median_predict;   break;
     }
 
-    avctx->extradata_size = 32;
+    avctx->extradata_size = MAGICYUV_EXTRADATA_SIZE;
 
     avctx->extradata = av_mallocz(avctx->extradata_size +
                                   AV_INPUT_BUFFER_PADDING_SIZE);
@@ -224,7 +228,7 @@ static av_cold int magy_encode_init(AVCodecContext *avctx)
         return AVERROR(ENOMEM);
     }
 
-    bytestream2_init_writer(&pb, avctx->extradata, avctx->extradata_size);
+    bytestream2_init_writer(&pb, avctx->extradata, MAGICYUV_EXTRADATA_SIZE);
     bytestream2_put_le32(&pb, MKTAG('M', 'A', 'G', 'Y'));
     bytestream2_put_le32(&pb, 32);
     bytestream2_put_byte(&pb, 7);
@@ -245,32 +249,18 @@ static av_cold int magy_encode_init(AVCodecContext *avctx)
     return 0;
 }
 
-static int magy_huff_cmp_len(const void *a, const void *b)
+static void calculate_codes(HuffEntry *he, uint16_t codes_count[33])
 {
-    const HuffEntry *aa = a, *bb = b;
-    return (aa->len - bb->len) * 256 + aa->sym - bb->sym;
-}
-
-static int huff_cmp_sym(const void *a, const void *b)
-{
-    const HuffEntry *aa = a, *bb = b;
-    return bb->sym - aa->sym;
-}
-
-static void calculate_codes(HuffEntry *he)
-{
-    uint32_t code;
-    int i;
-
-    AV_QSORT(he, 256, HuffEntry, magy_huff_cmp_len);
-
-    code = 1;
-    for (i = 255; i >= 0; i--) {
-        he[i].code  = code >> (32 - he[i].len);
-        code       += 0x80000000u >> (he[i].len - 1);
+    for (unsigned i = 32, nb_codes = 0; i > 0; i--) {
+        uint16_t curr = codes_count[i];   // # of leafs of length i
+        codes_count[i] = nb_codes / 2;    // # of non-leaf nodes on level i
+        nb_codes = codes_count[i] + curr; // # of nodes on level i
     }
 
-    AV_QSORT(he, 256, HuffEntry, huff_cmp_sym);
+    for (unsigned i = 0; i < 256; i++) {
+        he[i].code = codes_count[he[i].len];
+        codes_count[he[i].len]++;
+    }
 }
 
 static void count_usage(uint8_t *src, int width,
@@ -295,12 +285,13 @@ typedef struct PackageMergerList {
 
 static int compare_by_prob(const void *a, const void *b)
 {
-    PTable a_val = *(PTable *)a;
-    PTable b_val = *(PTable *)b;
-    return a_val.prob - b_val.prob;
+    const PTable *a2 = a;
+    const PTable *b2 = b;
+    return a2->prob - b2->prob;
 }
 
 static void magy_huffman_compute_bits(PTable *prob_table, HuffEntry *distincts,
+                                      uint16_t codes_counts[33],
                                       int size, int max_length)
 {
     PackageMergerList list_a, list_b, *to = &list_a, *from = &list_b, *temp;
@@ -356,8 +347,8 @@ static void magy_huffman_compute_bits(PTable *prob_table, HuffEntry *distincts,
     }
 
     for (i = 0; i < size; i++) {
-        distincts[i].sym = i;
         distincts[i].len = nbits[i];
+        codes_counts[nbits[i]]++;
     }
 }
 
@@ -366,18 +357,19 @@ static int encode_table(AVCodecContext *avctx, uint8_t *dst,
                         PutBitContext *pb, HuffEntry *he)
 {
     PTable counts[256] = { {0} };
+    uint16_t codes_counts[33] = { 0 };
     int i;
 
     count_usage(dst, width, height, counts);
 
     for (i = 0; i < 256; i++) {
         counts[i].prob++;
-        counts[i].value = 255 - i;
+        counts[i].value = i;
     }
 
-    magy_huffman_compute_bits(counts, he, 256, 12);
+    magy_huffman_compute_bits(counts, he, codes_counts, 256, 12);
 
-    calculate_codes(he);
+    calculate_codes(he, codes_counts);
 
     for (i = 0; i < 256; i++) {
         put_bits(pb, 1, 0);
@@ -413,11 +405,9 @@ static int encode_slice(uint8_t *src, uint8_t *dst, int dst_size,
     if (count)
         put_bits(&pb, 32 - count, 0);
 
-    count = put_bits_count(&pb);
-
     flush_put_bits(&pb);
 
-    return count >> 3;
+    return put_bytes_output(&pb);
 }
 
 static int magy_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
@@ -428,8 +418,8 @@ static int magy_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     const int width = avctx->width, height = avctx->height;
     int pos, slice, i, j, ret = 0;
 
-    ret = ff_alloc_packet2(avctx, pkt, (256 + 4 * s->nb_slices + width * height) *
-                           s->planes + 256, 0);
+    ret = ff_alloc_packet(avctx, pkt, (256 + 4 * s->nb_slices + width * height) *
+                          s->planes + 256);
     if (ret < 0)
         return ret;
 
@@ -468,32 +458,34 @@ static int magy_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     }
 
     if (s->correlate) {
-        uint8_t *r, *g, *b;
-        AVFrame *p = av_frame_clone(frame);
+        uint8_t *r, *g, *b, *decorrelated[2] = { s->decorrelate_buf[0],
+                                                 s->decorrelate_buf[1] };
+        const int decorrelate_linesize = FFALIGN(width, 16);
+        const uint8_t *const data[4] = { decorrelated[0], frame->data[0],
+                                         decorrelated[1], frame->data[3] };
+        const int linesize[4]  = { decorrelate_linesize, frame->linesize[0],
+                                   decorrelate_linesize, frame->linesize[3] };
 
-        g = p->data[0];
-        b = p->data[1];
-        r = p->data[2];
+        g = frame->data[0];
+        b = frame->data[1];
+        r = frame->data[2];
 
         for (i = 0; i < height; i++) {
-            s->llvidencdsp.diff_bytes(b, b, g, width);
-            s->llvidencdsp.diff_bytes(r, r, g, width);
-            g += p->linesize[0];
-            b += p->linesize[1];
-            r += p->linesize[2];
+            s->llvidencdsp.diff_bytes(decorrelated[0], b, g, width);
+            s->llvidencdsp.diff_bytes(decorrelated[1], r, g, width);
+            g += frame->linesize[0];
+            b += frame->linesize[1];
+            r += frame->linesize[2];
+            decorrelated[0] += decorrelate_linesize;
+            decorrelated[1] += decorrelate_linesize;
         }
-
-        FFSWAP(uint8_t*, p->data[0], p->data[1]);
-        FFSWAP(int, p->linesize[0], p->linesize[1]);
 
         for (i = 0; i < s->planes; i++) {
             for (slice = 0; slice < s->nb_slices; slice++) {
-                s->predict(s, p->data[i], s->slices[i], p->linesize[i],
-                               p->width, p->height);
+                s->predict(s, data[i], s->slices[i], linesize[i],
+                           frame->width, frame->height);
             }
         }
-
-        av_frame_free(&p);
     } else {
         for (i = 0; i < s->planes; i++) {
             for (slice = 0; slice < s->nb_slices; slice++) {
@@ -512,7 +504,7 @@ static int magy_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                      AV_CEIL_RSHIFT(frame->height, s->vshift[i]),
                      &s->pb, s->he[i]);
     }
-    s->tables_size = (put_bits_count(&s->pb) + 7) >> 3;
+    s->tables_size = put_bytes_count(&s->pb, 1);
     bytestream2_skip_p(&pb, s->tables_size);
 
     for (i = 0; i < s->planes; i++) {
@@ -536,7 +528,6 @@ static int magy_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     bytestream2_seek_p(&pb, pos, SEEK_SET);
 
     pkt->size   = bytestream2_tell_p(&pb);
-    pkt->flags |= AV_PKT_FLAG_KEY;
 
     *got_packet = 1;
 
@@ -550,6 +541,7 @@ static av_cold int magy_encode_close(AVCodecContext *avctx)
 
     for (i = 0; i < s->planes; i++)
         av_freep(&s->slices[i]);
+    av_freep(&s->decorrelate_buf);
 
     return 0;
 }
@@ -571,20 +563,21 @@ static const AVClass magicyuv_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_magicyuv_encoder = {
-    .name             = "magicyuv",
-    .long_name        = NULL_IF_CONFIG_SMALL("MagicYUV video"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_MAGICYUV,
+const FFCodec ff_magicyuv_encoder = {
+    .p.name           = "magicyuv",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("MagicYUV video"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_MAGICYUV,
     .priv_data_size   = sizeof(MagicYUVContext),
-    .priv_class       = &magicyuv_class,
+    .p.priv_class     = &magicyuv_class,
     .init             = magy_encode_init,
     .close            = magy_encode_close,
-    .encode2          = magy_encode_frame,
-    .capabilities     = AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_INTRA_ONLY,
-    .pix_fmts         = (const enum AVPixelFormat[]) {
+    FF_CODEC_ENCODE_CB(magy_encode_frame),
+    .p.capabilities   = AV_CODEC_CAP_FRAME_THREADS,
+    .p.pix_fmts       = (const enum AVPixelFormat[]) {
                           AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP, AV_PIX_FMT_YUV422P,
                           AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUVA444P, AV_PIX_FMT_GRAY8,
                           AV_PIX_FMT_NONE
                       },
+    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

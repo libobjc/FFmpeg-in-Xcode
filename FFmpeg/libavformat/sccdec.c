@@ -22,6 +22,7 @@
 #include "avformat.h"
 #include "internal.h"
 #include "subtitles.h"
+#include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
 
@@ -50,9 +51,9 @@ static int scc_probe(const AVProbeData *p)
 static int convert(uint8_t x)
 {
     if (x >= 'a')
-        x -= 87;
+        x -= 'a' - 10;
     else if (x >= 'A')
-        x -= 55;
+        x -= 'A' - 10;
     else
         x -= '0';
     return x;
@@ -62,9 +63,8 @@ static int scc_read_header(AVFormatContext *s)
 {
     SCCContext *scc = s->priv_data;
     AVStream *st = avformat_new_stream(s, NULL);
-    char line[4096], line2[4096];
-    int count = 0, ret = 0;
-    ptrdiff_t len2, len;
+    AVPacket *sub = NULL;
+    ptrdiff_t len;
     uint8_t out[4096];
     FFTextReader tr;
 
@@ -76,110 +76,86 @@ static int scc_read_header(AVFormatContext *s)
     st->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
     st->codecpar->codec_id   = AV_CODEC_ID_EIA_608;
 
-    while (!ff_text_eof(&tr)) {
-        const int64_t pos = ff_text_pos(&tr);
+    while (1) {
         char *saveptr = NULL, *lline;
-        int hh1, mm1, ss1, fs1, i;
-        int hh2, mm2, ss2, fs2;
-        int64_t ts_start, ts_end;
-        AVPacket *sub;
+        int hh, mm, ss, fs, i;
+        char line[4096];
+        int64_t pos, ts;
 
-        if (count == 0) {
-            while (!ff_text_eof(&tr)) {
-                len = ff_subtitles_read_line(&tr, line, sizeof(line));
-                if (len > 13)
-                    break;
-            }
-        }
-
-        if (!strncmp(line, "Scenarist_SCC V1.0", 18))
-            continue;
-        if (sscanf(line, "%d:%d:%d%*[:;]%d", &hh1, &mm1, &ss1, &fs1) != 4)
-            continue;
-
-        ts_start = (hh1 * 3600LL + mm1 * 60LL + ss1) * 1000LL + fs1 * 33;
-
-        while (!ff_text_eof(&tr)) {
-            len2 = ff_subtitles_read_line(&tr, line2, sizeof(line2));
-            if (len2 > 13)
+        pos = ff_text_pos(&tr);
+        len = ff_subtitles_read_line(&tr, line, sizeof(line));
+        if (len <= 13) {
+            if (ff_text_eof(&tr))
                 break;
+            continue;
         }
-        if (sscanf(line2, "%d:%d:%d%*[:;]%d", &hh2, &mm2, &ss2, &fs2) != 4)
+        if (av_sscanf(line, "%d:%d:%d%*[:;]%d", &hh, &mm, &ss, &fs) != 4)
             continue;
 
-        ts_end = (hh2 * 3600LL + mm2 * 60LL + ss2) * 1000LL + fs2 * 33;
-        count++;
+        ts = (hh * 3600LL + mm * 60LL + ss) * 1000LL + fs * 33LL;
+        if (sub)
+            sub->duration = ts - sub->pts;
 
-try_again:
-        lline = (char *)&line;
+        lline  = line;
         lline += 12;
 
         for (i = 0; i < 4095; i += 3) {
             char *ptr = av_strtok(lline, " ", &saveptr);
             char c1, c2, c3, c4;
+            uint8_t o1, o2;
 
             if (!ptr)
                 break;
 
-            if (sscanf(ptr, "%c%c%c%c", &c1, &c2, &c3, &c4) != 4)
+            if (av_sscanf(ptr, "%c%c%c%c", &c1, &c2, &c3, &c4) != 4)
                 break;
+            o1 = convert(c2) | (convert(c1) << 4);
+            o2 = convert(c4) | (convert(c3) << 4);
 
             lline = NULL;
+
+            if (i > 12 && o1 == 0x94 && o2 == 0x20 && saveptr &&
+                (av_strncasecmp(saveptr, "942f", 4) && !av_strncasecmp(saveptr, "942c", 4))) {
+
+                sub = ff_subtitles_queue_insert(&scc->q, out, i, 0);
+                if (!sub)
+                    return AVERROR(ENOMEM);
+
+                sub->pos = pos;
+                pos += i;
+                sub->pts = ts;
+                sub->duration = i * 11;
+                ts += sub->duration;
+                i = 0;
+            }
+
             out[i+0] = 0xfc;
-            out[i+1] = convert(c2) | (convert(c1) << 4);
-            out[i+2] = convert(c4) | (convert(c3) << 4);
+            out[i+1] = o1;
+            out[i+2] = o2;
         }
-        out[i] = 0;
 
         sub = ff_subtitles_queue_insert(&scc->q, out, i, 0);
         if (!sub)
             return AVERROR(ENOMEM);
 
         sub->pos = pos;
-        sub->pts = ts_start;
-        sub->duration = FFMAX(1200, ts_end - ts_start);
-        memmove(line, line2, sizeof(line));
-        line2[0] = 0;
-        FFSWAP(ptrdiff_t, len, len2);
+        sub->pts = ts;
     }
-
-    if (line[0])
-        goto try_again;
 
     ff_subtitles_queue_finalize(s, &scc->q);
 
-    return ret;
-}
-
-static int scc_read_packet(AVFormatContext *s, AVPacket *pkt)
-{
-    SCCContext *scc = s->priv_data;
-    return ff_subtitles_queue_read_packet(&scc->q, pkt);
-}
-
-static int scc_read_seek(AVFormatContext *s, int stream_index,
-                         int64_t min_ts, int64_t ts, int64_t max_ts, int flags)
-{
-    SCCContext *scc = s->priv_data;
-    return ff_subtitles_queue_seek(&scc->q, s, stream_index,
-                                   min_ts, ts, max_ts, flags);
-}
-
-static int scc_read_close(AVFormatContext *s)
-{
-    SCCContext *scc = s->priv_data;
-    ff_subtitles_queue_clean(&scc->q);
     return 0;
 }
 
-AVInputFormat ff_scc_demuxer = {
+const AVInputFormat ff_scc_demuxer = {
     .name           = "scc",
     .long_name      = NULL_IF_CONFIG_SMALL("Scenarist Closed Captions"),
     .priv_data_size = sizeof(SCCContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = scc_probe,
     .read_header    = scc_read_header,
-    .read_packet    = scc_read_packet,
-    .read_seek2     = scc_read_seek,
-    .read_close     = scc_read_close,
     .extensions     = "scc",
+    .read_packet    = ff_subtitles_read_packet,
+    .read_seek2     = ff_subtitles_read_seek,
+    .read_close     = ff_subtitles_read_close,
 };

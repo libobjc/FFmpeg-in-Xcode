@@ -31,12 +31,9 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
-#include "libavutil/timer.h"
 #include "config.h"
 #include "cabac.h"
 #include "cabac_functions.h"
-#include "internal.h"
-#include "avcodec.h"
 #include "h264dec.h"
 #include "h264data.h"
 #include "h264_mvpred.h"
@@ -44,6 +41,8 @@
 
 #if ARCH_X86
 #include "x86/h264_cabac.c"
+#elif ARCH_LOONGARCH64
+#include "loongarch/h264_cabac.c"
 #endif
 
 /* Cabac pre state table */
@@ -1281,6 +1280,15 @@ void ff_h264_init_cabac_states(const H264Context *h, H264SliceContext *sl)
     }
 }
 
+static av_always_inline uint16_t pack8to16(unsigned a, unsigned b)
+{
+#if HAVE_BIGENDIAN
+    return (b & 0xFF) + (a << 8);
+#else
+    return (a & 0xFF) + (b << 8);
+#endif
+}
+
 static int decode_cabac_field_decoding_flag(const H264Context *h, H264SliceContext *sl)
 {
     const int mbb_xy = sl->mb_xy - 2*h->mb_stride;
@@ -1895,9 +1903,7 @@ static av_always_inline void decode_cabac_luma_residual(const H264Context *h, H2
                     qmul = h->ps.pps->dequant4_coeff[cqm][qscale];
                     for( i4x4 = 0; i4x4 < 4; i4x4++ ) {
                         const int index = 16*p + 4*i8x8 + i4x4;
-//START_TIMER
                         decode_cabac_residual_nondc(h, sl, sl->mb + (16*index << pixel_shift), ctx_cat[2][p], index, scan, qmul, 16);
-//STOP_TIMER("decode_residual")
                     }
                 }
             } else {

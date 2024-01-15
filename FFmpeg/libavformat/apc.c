@@ -23,7 +23,7 @@
 
 #include "libavutil/channel_layout.h"
 #include "avformat.h"
-#include "internal.h"
+#include "demux.h"
 
 static int apc_probe(const AVProbeData *p)
 {
@@ -37,6 +37,8 @@ static int apc_read_header(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
     AVStream *st;
+    int ret;
+    int channels;
 
     avio_rl32(pb); /* CRYO */
     avio_rl32(pb); /* _APC */
@@ -53,19 +55,14 @@ static int apc_read_header(AVFormatContext *s)
     st->codecpar->sample_rate = avio_rl32(pb);
 
     /* initial predictor values for adpcm decoder */
-    if (ff_get_extradata(s, st->codecpar, pb, 2 * 4) < 0)
-        return AVERROR(ENOMEM);
+    if ((ret = ff_get_extradata(s, st->codecpar, pb, 2 * 4)) < 0)
+        return ret;
 
-    if (avio_rl32(pb)) {
-        st->codecpar->channels       = 2;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
-    } else {
-        st->codecpar->channels       = 1;
-        st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
-    }
+    channels = !!avio_rl32(pb) + 1;
+    av_channel_layout_default(&st->codecpar->ch_layout, channels);
 
     st->codecpar->bits_per_coded_sample = 4;
-    st->codecpar->bit_rate = (int64_t)st->codecpar->bits_per_coded_sample * st->codecpar->channels
+    st->codecpar->bit_rate = (int64_t)st->codecpar->bits_per_coded_sample * channels
                           * st->codecpar->sample_rate;
     st->codecpar->block_align = 1;
 
@@ -78,12 +75,11 @@ static int apc_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     if (av_get_packet(s->pb, pkt, MAX_READ_SIZE) <= 0)
         return AVERROR(EIO);
-    pkt->flags &= ~AV_PKT_FLAG_CORRUPT;
     pkt->stream_index = 0;
     return 0;
 }
 
-AVInputFormat ff_apc_demuxer = {
+const AVInputFormat ff_apc_demuxer = {
     .name           = "apc",
     .long_name      = NULL_IF_CONFIG_SMALL("CRYO APC"),
     .read_probe     = apc_probe,

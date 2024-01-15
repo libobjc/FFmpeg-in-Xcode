@@ -24,7 +24,9 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "encode.h"
+#include "packet_internal.h"
 #include "snow_dwt.h"
 #include "snow.h"
 
@@ -32,20 +34,13 @@
 #include "mathops.h"
 
 #include "mpegvideo.h"
-#include "h263.h"
+#include "h263enc.h"
 
 static av_cold int encode_init(AVCodecContext *avctx)
 {
     SnowContext *s = avctx->priv_data;
     int plane_index, ret;
     int i;
-
-#if FF_API_PRIVATE_OPT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->prediction_method)
-        s->pred = avctx->prediction_method;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
     if(s->pred == DWT_97
        && (avctx->flags & AV_CODEC_FLAG_QSCALE)
@@ -81,9 +76,10 @@ FF_ENABLE_DEPRECATION_WARNINGS
     s->m.bit_rate= avctx->bit_rate;
     s->m.lmin    = avctx->mb_lmin;
     s->m.lmax    = avctx->mb_lmax;
+    s->m.mb_num  = (avctx->width * avctx->height + 255) / 256; // For ratecontrol
 
     s->m.me.temp      =
-    s->m.me.scratchpad= av_mallocz_array((avctx->width+64), 2*16*2*sizeof(uint8_t));
+    s->m.me.scratchpad = av_calloc(avctx->width + 64, 2*16*2*sizeof(uint8_t));
     s->m.me.map       = av_mallocz(ME_MAP_SIZE*sizeof(uint32_t));
     s->m.me.score_map = av_mallocz(ME_MAP_SIZE*sizeof(uint32_t));
     s->m.sc.obmc_scratchpad= av_mallocz(MB_SIZE*MB_SIZE*12*sizeof(uint32_t));
@@ -124,20 +120,17 @@ FF_ENABLE_DEPRECATION_WARNINGS
 /*    case AV_PIX_FMT_RGB32:
         s->colorspace= 1;
         break;*/
-    default:
-        av_log(avctx, AV_LOG_ERROR, "pixel format not supported\n");
-        return AVERROR_PATCHWELCOME;
     }
 
     ret = av_pix_fmt_get_chroma_sub_sample(avctx->pix_fmt, &s->chroma_h_shift,
                                            &s->chroma_v_shift);
-    if (ret) {
-        av_log(avctx, AV_LOG_ERROR, "pixel format invalid or unknown\n");
+    if (ret)
         return ret;
-    }
 
-    ff_set_cmp(&s->mecc, s->mecc.me_cmp, s->avctx->me_cmp);
-    ff_set_cmp(&s->mecc, s->mecc.me_sub_cmp, s->avctx->me_sub_cmp);
+    ret  = ff_set_cmp(&s->mecc, s->mecc.me_cmp, s->avctx->me_cmp);
+    ret |= ff_set_cmp(&s->mecc, s->mecc.me_sub_cmp, s->avctx->me_sub_cmp);
+    if (ret < 0)
+        return AVERROR(EINVAL);
 
     s->input_picture = av_frame_alloc();
     if (!s->input_picture)
@@ -149,8 +142,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if(s->motion_est == FF_ME_ITER){
         int size= s->b_width * s->b_height << 2*s->block_max_depth;
         for(i=0; i<s->max_ref_frames; i++){
-            s->ref_mvs[i]= av_mallocz_array(size, sizeof(int16_t[2]));
-            s->ref_scores[i]= av_mallocz_array(size, sizeof(uint32_t));
+            s->ref_mvs[i]    = av_calloc(size, sizeof(*s->ref_mvs[i]));
+            s->ref_scores[i] = av_calloc(size, sizeof(*s->ref_scores[i]));
             if (!s->ref_mvs[i] || !s->ref_scores[i])
                 return AVERROR(ENOMEM);
         }
@@ -312,7 +305,7 @@ static int encode_q_branch(SnowContext *s, int level, int x, int y){
     if(P_LEFT[1]     > (c->ymax<<shift)) P_LEFT[1]    = (c->ymax<<shift);
     if(P_TOP[0]      > (c->xmax<<shift)) P_TOP[0]     = (c->xmax<<shift);
     if(P_TOP[1]      > (c->ymax<<shift)) P_TOP[1]     = (c->ymax<<shift);
-    if(P_TOPRIGHT[0] < (c->xmin<<shift)) P_TOPRIGHT[0]= (c->xmin<<shift);
+    if(P_TOPRIGHT[0] < (c->xmin * (1<<shift))) P_TOPRIGHT[0]= (c->xmin * (1<<shift));
     if(P_TOPRIGHT[0] > (c->xmax<<shift)) P_TOPRIGHT[0]= (c->xmax<<shift); //due to pmx no clip
     if(P_TOPRIGHT[1] > (c->ymax<<shift)) P_TOPRIGHT[1]= (c->ymax<<shift);
 
@@ -1542,10 +1535,10 @@ static void calculate_visual_weight(SnowContext *s, Plane *p){
     int level, orientation, x, y;
 
     for(level=0; level<s->spatial_decomposition_count; level++){
+        int64_t error=0;
         for(orientation=level ? 1 : 0; orientation<4; orientation++){
             SubBand *b= &p->band[level][orientation];
             IDWTELEM *ibuf= b->ibuf;
-            int64_t error=0;
 
             memset(s->spatial_idwt_buffer, 0, sizeof(*s->spatial_idwt_buffer)*width*height);
             ibuf[b->width/2 + b->height/2*b->stride]= 256*16;
@@ -1556,9 +1549,13 @@ static void calculate_visual_weight(SnowContext *s, Plane *p){
                     error += d*d;
                 }
             }
-
+            if (orientation == 2)
+                error /= 2;
             b->qlog= (int)(QROOT * log2(352256.0/sqrt(error)) + 0.5);
+            if (orientation != 1)
+                error = 0;
         }
+        p->band[level][1].qlog = p->band[level][2].qlog;
     }
 }
 
@@ -1574,7 +1571,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     uint8_t rc_header_bak[sizeof(s->header_state)];
     uint8_t rc_block_bak[sizeof(s->block_state)];
 
-    if ((ret = ff_alloc_packet2(avctx, pkt, s->b_width*s->b_height*MB_SIZE*MB_SIZE*3 + AV_INPUT_BUFFER_MIN_SIZE, 0)) < 0)
+    if ((ret = ff_alloc_packet(avctx, pkt, s->b_width*s->b_height*MB_SIZE*MB_SIZE*3 + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
         return ret;
 
     ff_init_range_encoder(c, pkt->data, pkt->size);
@@ -1642,14 +1639,6 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     }
 
     ff_snow_frame_start(s);
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    av_frame_unref(avctx->coded_frame);
-    ret = av_frame_ref(avctx->coded_frame, s->current_picture);
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-    if (ret < 0)
-        return ret;
 
     s->m.current_picture_ptr= &s->m.current_picture;
     s->m.current_picture.f = s->current_picture;
@@ -1664,7 +1653,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
         s->m.avctx= s->avctx;
         s->m.   last_picture.f = s->last_picture[0];
-        s->m.    new_picture.f = s->input_picture;
+        s->m.    new_picture   = s->input_picture;
         s->m.   last_picture_ptr= &s->m.   last_picture;
         s->m.linesize = stride;
         s->m.uvlinesize= s->current_picture->linesize[1];
@@ -1746,13 +1735,6 @@ redo_frame:
                 }
             predict_plane(s, s->spatial_idwt_buffer, plane_index, 0);
 
-#if FF_API_PRIVATE_OPT
-FF_DISABLE_DEPRECATION_WARNINGS
-            if(s->avctx->scenechange_threshold)
-                s->scenechange_threshold = s->avctx->scenechange_threshold;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
             if(   plane_index==0
                && pic->pict_type == AV_PICTURE_TYPE_P
                && !(avctx->flags&AV_CODEC_FLAG_PASS2)
@@ -1774,7 +1756,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             }else{
                 for(y=0; y<h; y++){
                     for(x=0; x<w; x++){
-                        s->spatial_dwt_buffer[y*w + x]=s->spatial_idwt_buffer[y*w + x]<<ENCODER_EXTRA_BITS;
+                        s->spatial_dwt_buffer[y*w + x]= s->spatial_idwt_buffer[y*w + x] * (1 << ENCODER_EXTRA_BITS);
                     }
                 }
             }
@@ -1877,27 +1859,13 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if(avctx->flags&AV_CODEC_FLAG_PASS1)
         ff_write_pass1_stats(&s->m);
     s->m.last_pict_type = s->m.pict_type;
-#if FF_API_STAT_BITS
-FF_DISABLE_DEPRECATION_WARNINGS
-    avctx->frame_bits = s->m.frame_bits;
-    avctx->mv_bits = s->m.mv_bits;
-    avctx->misc_bits = s->m.misc_bits;
-    avctx->p_tex_bits = s->m.p_tex_bits;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
     emms_c();
 
     ff_side_data_set_encoder_stats(pkt, s->current_picture->quality,
                                    s->encoding_error,
-                                   (s->avctx->flags&AV_CODEC_FLAG_PSNR) ? 4 : 0,
+                                   (s->avctx->flags&AV_CODEC_FLAG_PSNR) ? SNOW_MAX_PLANES : 0,
                                    s->current_picture->pict_type);
-
-#if FF_API_ERROR_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    memcpy(s->current_picture->error, s->encoding_error, sizeof(s->encoding_error));
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
     pkt->size = ff_rac_terminate(c, 0);
     if (s->current_picture->key_frame)
@@ -1935,6 +1903,11 @@ static const AVOption options[] = {
     { "pred",           "Spatial decomposition type",                                OFFSET(pred), AV_OPT_TYPE_INT, { .i64 = 0 }, DWT_97, DWT_53, VE, "pred" },
         { "dwt97", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, INT_MIN, INT_MAX, VE, "pred" },
         { "dwt53", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, INT_MIN, INT_MAX, VE, "pred" },
+    { "rc_eq", "Set rate control equation. When computing the expression, besides the standard functions "
+     "defined in the section 'Expression Evaluation', the following functions are available: "
+     "bits2qp(bits), qp2bits(qp). Also the following constants are available: iTex pTex tex mv "
+     "fCode iCount mcVar var isI isP isB avgQP qComp avgIITex avgPITex avgPPTex avgBPTex avgTex.",
+                                                                                  OFFSET(m.rc_eq), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VE },
     { NULL },
 };
 
@@ -1945,21 +1918,21 @@ static const AVClass snowenc_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_snow_encoder = {
-    .name           = "snow",
-    .long_name      = NULL_IF_CONFIG_SMALL("Snow"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_SNOW,
+const FFCodec ff_snow_encoder = {
+    .p.name         = "snow",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Snow"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_SNOW,
     .priv_data_size = sizeof(SnowContext),
     .init           = encode_init,
-    .encode2        = encode_frame,
+    FF_CODEC_ENCODE_CB(encode_frame),
     .close          = encode_end,
-    .pix_fmts       = (const enum AVPixelFormat[]){
+    .p.pix_fmts     = (const enum AVPixelFormat[]){
         AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV410P, AV_PIX_FMT_YUV444P,
         AV_PIX_FMT_GRAY8,
         AV_PIX_FMT_NONE
     },
-    .priv_class     = &snowenc_class,
+    .p.priv_class   = &snowenc_class,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
                       FF_CODEC_CAP_INIT_CLEANUP,
 };

@@ -21,9 +21,11 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct VPKDemuxContext {
+    unsigned data_start;
     unsigned block_count;
     unsigned current_block;
     unsigned last_block_size;
@@ -58,18 +60,19 @@ static int vpk_read_header(AVFormatContext *s)
     st->codecpar->sample_rate = avio_rl32(s->pb);
     if (st->codecpar->sample_rate <= 0 || st->codecpar->block_align <= 0)
         return AVERROR_INVALIDDATA;
-    st->codecpar->channels    = avio_rl32(s->pb);
-    if (st->codecpar->channels <= 0)
+    st->codecpar->ch_layout.nb_channels = avio_rl32(s->pb);
+    if (st->codecpar->ch_layout.nb_channels <= 0)
         return AVERROR_INVALIDDATA;
-    samples_per_block      = ((st->codecpar->block_align / st->codecpar->channels) * 28LL) / 16;
+    samples_per_block      = ((st->codecpar->block_align / st->codecpar->ch_layout.nb_channels) * 28LL) / 16;
     if (samples_per_block <= 0)
         return AVERROR_INVALIDDATA;
     vpk->block_count       = (st->duration + (samples_per_block - 1)) / samples_per_block;
-    vpk->last_block_size   = (st->duration % samples_per_block) * 16 * st->codecpar->channels / 28;
+    vpk->last_block_size   = (st->duration % samples_per_block) * 16 * st->codecpar->ch_layout.nb_channels / 28;
 
     if (offset < avio_tell(s->pb))
         return AVERROR_INVALIDDATA;
     avio_skip(s->pb, offset - avio_tell(s->pb));
+    vpk->data_start = offset;
     avpriv_set_pts_info(st, 64, 1, st->codecpar->sample_rate);
 
     return 0;
@@ -83,21 +86,21 @@ static int vpk_read_packet(AVFormatContext *s, AVPacket *pkt)
 
     vpk->current_block++;
     if (vpk->current_block == vpk->block_count) {
-        unsigned size = vpk->last_block_size / par->channels;
-        unsigned skip = (par->block_align - vpk->last_block_size) / par->channels;
+        unsigned size = vpk->last_block_size / par->ch_layout.nb_channels;
+        unsigned skip = (par->block_align - vpk->last_block_size) / par->ch_layout.nb_channels;
+        uint64_t pos = avio_tell(s->pb);
 
         ret = av_new_packet(pkt, vpk->last_block_size);
         if (ret < 0)
             return ret;
-        for (i = 0; i < par->channels; i++) {
+        for (i = 0; i < par->ch_layout.nb_channels; i++) {
             ret = avio_read(s->pb, pkt->data + i * size, size);
             avio_skip(s->pb, skip);
             if (ret != size) {
-                av_packet_unref(pkt);
-                ret = AVERROR(EIO);
-                break;
+                return AVERROR(EIO);
             }
         }
+        pkt->pos = pos;
         pkt->stream_index = 0;
     } else if (vpk->current_block < vpk->block_count) {
         ret = av_get_packet(s->pb, pkt, par->block_align);
@@ -109,12 +112,36 @@ static int vpk_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-AVInputFormat ff_vpk_demuxer = {
+static int vpk_read_seek(AVFormatContext *s, int stream_index,
+                         int64_t timestamp, int flags)
+{
+    AVStream *st = s->streams[stream_index];
+    AVCodecParameters *par = st->codecpar;
+    VPKDemuxContext *vpk = s->priv_data;
+    int samples_per_block;
+    int64_t ret = 0;
+
+    samples_per_block = av_get_audio_frame_duration2(par, par->block_align);
+    if (samples_per_block > 0)
+        timestamp /= samples_per_block;
+    else
+        return -1;
+    ret = avio_seek(s->pb, vpk->data_start + timestamp * par->block_align, SEEK_SET);
+    if (ret < 0)
+        return ret;
+
+    vpk->current_block = timestamp;
+    avpriv_update_cur_dts(s, st, timestamp * samples_per_block);
+    return 0;
+}
+
+const AVInputFormat ff_vpk_demuxer = {
     .name           = "vpk",
     .long_name      = NULL_IF_CONFIG_SMALL("Sony PS2 VPK"),
     .priv_data_size = sizeof(VPKDemuxContext),
     .read_probe     = vpk_probe,
     .read_header    = vpk_read_header,
     .read_packet    = vpk_read_packet,
+    .read_seek      = vpk_read_seek,
     .extensions     = "vpk",
 };

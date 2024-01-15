@@ -37,6 +37,7 @@ static int celt_header(AVFormatContext *s, int idx)
     AVStream *st = s->streams[idx];
     struct oggcelt_private *priv = os->private;
     uint8_t *p = os->buf + os->pstart;
+    int ret;
 
     if (os->psize == 60 &&
         !memcmp(p, ff_celt_codec.magic, ff_celt_codec.magicsize)) {
@@ -48,9 +49,10 @@ static int celt_header(AVFormatContext *s, int idx)
         priv = av_malloc(sizeof(struct oggcelt_private));
         if (!priv)
             return AVERROR(ENOMEM);
-        if (ff_alloc_extradata(st->codecpar, 2 * sizeof(uint32_t)) < 0) {
+        ret = ff_alloc_extradata(st->codecpar, 2 * sizeof(uint32_t));
+        if (ret < 0) {
             av_free(priv);
-            return AVERROR(ENOMEM);
+            return ret;
         }
         version          = AV_RL32(p + 28);
         /* unused header size field skipped */
@@ -62,7 +64,7 @@ static int celt_header(AVFormatContext *s, int idx)
         st->codecpar->codec_type     = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id       = AV_CODEC_ID_CELT;
         st->codecpar->sample_rate    = sample_rate;
-        st->codecpar->channels       = nb_channels;
+        st->codecpar->ch_layout.nb_channels = nb_channels;
         if (sample_rate)
             avpriv_set_pts_info(st, 64, 1, sample_rate);
 

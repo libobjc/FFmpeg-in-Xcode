@@ -28,7 +28,6 @@
  * audio multiband compand filter
  */
 
-#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/ffmath.h"
 #include "libavutil/opt.h"
@@ -121,36 +120,6 @@ static av_cold void uninit(AVFilterContext *ctx)
         }
     }
     av_freep(&s->bands);
-}
-
-static int query_formats(AVFilterContext *ctx)
-{
-    AVFilterChannelLayouts *layouts;
-    AVFilterFormats *formats;
-    static const enum AVSampleFormat sample_fmts[] = {
-        AV_SAMPLE_FMT_DBLP,
-        AV_SAMPLE_FMT_NONE
-    };
-    int ret;
-
-    layouts = ff_all_channel_counts();
-    if (!layouts)
-        return AVERROR(ENOMEM);
-    ret = ff_set_common_channel_layouts(ctx, layouts);
-    if (ret < 0)
-        return ret;
-
-    formats = ff_make_format_list(sample_fmts);
-    if (!formats)
-        return AVERROR(ENOMEM);
-    ret = ff_set_common_formats(ctx, formats);
-    if (ret < 0)
-        return ret;
-
-    formats = ff_all_samplerates();
-    if (!formats)
-        return AVERROR(ENOMEM);
-    return ff_set_common_samplerates(ctx, formats);
 }
 
 static void count_items(char *item_str, int *nb_items, char delimiter)
@@ -333,7 +302,7 @@ static int crossover_setup(AVFilterLink *outlink, Crossover *p, double frequency
     square_quadratic(x + 3, p->coefs + 5);
     square_quadratic(x + 6, p->coefs + 10);
 
-    p->previous = av_calloc(outlink->channels, sizeof(*p->previous));
+    p->previous = av_calloc(outlink->ch_layout.nb_channels, sizeof(*p->previous));
     if (!p->previous)
         return AVERROR(ENOMEM);
 
@@ -361,10 +330,8 @@ static int config_output(AVFilterLink *outlink)
         char *p2, *p3, *saveptr2 = NULL, *saveptr3 = NULL;
         double radius;
 
-        if (!tstr) {
-            uninit(ctx);
+        if (!tstr)
             return AVERROR(EINVAL);
-        }
         p = NULL;
 
         p2 = tstr;
@@ -372,7 +339,6 @@ static int config_output(AVFilterLink *outlink)
         tstr2 = av_strtok(p2, " ", &saveptr2);
         if (!tstr2) {
             av_log(ctx, AV_LOG_ERROR, "at least one attacks/decays rate is mandatory\n");
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
         p2 = NULL;
@@ -381,14 +347,16 @@ static int config_output(AVFilterLink *outlink)
         count_items(tstr2, &nb_attacks, ',');
         if (!nb_attacks || nb_attacks & 1) {
             av_log(ctx, AV_LOG_ERROR, "number of attacks rate plus decays rate must be even\n");
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
 
-        s->bands[i].attack_rate = av_calloc(outlink->channels, sizeof(double));
-        s->bands[i].decay_rate = av_calloc(outlink->channels, sizeof(double));
-        s->bands[i].volume = av_calloc(outlink->channels, sizeof(double));
-        for (k = 0; k < FFMIN(nb_attacks / 2, outlink->channels); k++) {
+        s->bands[i].attack_rate = av_calloc(outlink->ch_layout.nb_channels, sizeof(double));
+        s->bands[i].decay_rate = av_calloc(outlink->ch_layout.nb_channels, sizeof(double));
+        s->bands[i].volume = av_calloc(outlink->ch_layout.nb_channels, sizeof(double));
+        if (!s->bands[i].attack_rate || !s->bands[i].decay_rate || !s->bands[i].volume)
+            return AVERROR(ENOMEM);
+
+        for (k = 0; k < FFMIN(nb_attacks / 2, outlink->ch_layout.nb_channels); k++) {
             char *tstr3 = av_strtok(p3, ",", &saveptr3);
 
             p3 = NULL;
@@ -409,7 +377,7 @@ static int config_output(AVFilterLink *outlink)
             }
         }
 
-        for (ch = k; ch < outlink->channels; ch++) {
+        for (ch = k; ch < outlink->ch_layout.nb_channels; ch++) {
             s->bands[i].attack_rate[ch] = s->bands[i].attack_rate[k - 1];
             s->bands[i].decay_rate[ch]  = s->bands[i].decay_rate[k - 1];
         }
@@ -417,7 +385,6 @@ static int config_output(AVFilterLink *outlink)
         tstr2 = av_strtok(p2, " ", &saveptr2);
         if (!tstr2) {
             av_log(ctx, AV_LOG_ERROR, "transfer function curve in dB must be set\n");
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
         sscanf(tstr2, "%lf", &s->bands[i].transfer_fn.curve_dB);
@@ -427,7 +394,6 @@ static int config_output(AVFilterLink *outlink)
         tstr2 = av_strtok(p2, " ", &saveptr2);
         if (!tstr2) {
             av_log(ctx, AV_LOG_ERROR, "transfer points missing\n");
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
 
@@ -435,38 +401,31 @@ static int config_output(AVFilterLink *outlink)
         s->bands[i].transfer_fn.nb_segments = (nb_points + 4) * 2;
         s->bands[i].transfer_fn.segments = av_calloc(s->bands[i].transfer_fn.nb_segments,
                                                      sizeof(CompandSegment));
-        if (!s->bands[i].transfer_fn.segments) {
-            uninit(ctx);
+        if (!s->bands[i].transfer_fn.segments)
             return AVERROR(ENOMEM);
-        }
 
         ret = parse_points(tstr2, nb_points, radius, &s->bands[i].transfer_fn, ctx);
         if (ret < 0) {
             av_log(ctx, AV_LOG_ERROR, "transfer points parsing failed\n");
-            uninit(ctx);
             return ret;
         }
 
         tstr2 = av_strtok(p2, " ", &saveptr2);
         if (!tstr2) {
             av_log(ctx, AV_LOG_ERROR, "crossover_frequency is missing\n");
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
 
         new_nb_items += sscanf(tstr2, "%lf", &s->bands[i].topfreq) == 1;
         if (s->bands[i].topfreq < 0 || s->bands[i].topfreq >= outlink->sample_rate / 2) {
             av_log(ctx, AV_LOG_ERROR, "crossover_frequency: %f, should be >=0 and lower than half of sample rate: %d.\n", s->bands[i].topfreq, outlink->sample_rate / 2);
-            uninit(ctx);
             return AVERROR(EINVAL);
         }
 
         if (s->bands[i].topfreq != 0) {
             ret = crossover_setup(outlink, &s->bands[i].filter, s->bands[i].topfreq);
-            if (ret < 0) {
-                uninit(ctx);
+            if (ret < 0)
                 return ret;
-            }
         }
 
         tstr2 = av_strtok(p2, " ", &saveptr2);
@@ -481,7 +440,7 @@ static int config_output(AVFilterLink *outlink)
                 sscanf(tstr2, "%lf", &initial_volume);
                 initial_volume = pow(10.0, initial_volume / 20);
 
-                for (k = 0; k < outlink->channels; k++) {
+                for (k = 0; k < outlink->ch_layout.nb_channels; k++) {
                     s->bands[i].volume[k] = initial_volume;
                 }
 
@@ -615,7 +574,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         s->band_samples = in->nb_samples;
     }
 
-    for (ch = 0; ch < outlink->channels; ch++) {
+    for (ch = 0; ch < outlink->ch_layout.nb_channels; ch++) {
         double *a, *dst = (double *)out->extended_data[ch];
 
         for (band = 0, abuf = in, bbuf = s->band_buf2, cbuf = s->band_buf1; band < s->nb_bands; band++) {
@@ -662,7 +621,6 @@ static const AVFilterPad mcompand_inputs[] = {
         .type           = AVMEDIA_TYPE_AUDIO,
         .filter_frame   = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad mcompand_outputs[] = {
@@ -672,18 +630,17 @@ static const AVFilterPad mcompand_outputs[] = {
         .request_frame = request_frame,
         .config_props  = config_output,
     },
-    { NULL }
 };
 
 
-AVFilter ff_af_mcompand = {
+const AVFilter ff_af_mcompand = {
     .name           = "mcompand",
     .description    = NULL_IF_CONFIG_SMALL(
             "Multiband Compress or expand audio dynamic range."),
-    .query_formats  = query_formats,
     .priv_size      = sizeof(MCompandContext),
     .priv_class     = &mcompand_class,
     .uninit         = uninit,
-    .inputs         = mcompand_inputs,
-    .outputs        = mcompand_outputs,
+    FILTER_INPUTS(mcompand_inputs),
+    FILTER_OUTPUTS(mcompand_outputs),
+    FILTER_SINGLE_SAMPLEFMT(AV_SAMPLE_FMT_DBLP),
 };

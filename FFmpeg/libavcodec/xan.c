@@ -38,6 +38,7 @@
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "internal.h"
 
@@ -100,16 +101,12 @@ static av_cold int xan_decode_init(AVCodecContext *avctx)
         return AVERROR(ENOMEM);
     s->buffer2_size = avctx->width * avctx->height;
     s->buffer2 = av_malloc(s->buffer2_size + 130);
-    if (!s->buffer2) {
-        av_freep(&s->buffer1);
+    if (!s->buffer2)
         return AVERROR(ENOMEM);
-    }
 
     s->last_frame = av_frame_alloc();
-    if (!s->last_frame) {
-        xan_decode_end(avctx);
+    if (!s->last_frame)
         return AVERROR(ENOMEM);
-    }
 
     return 0;
 }
@@ -541,11 +538,9 @@ static const uint8_t gamma_lookup[256] = {
 };
 #endif
 
-static int xan_decode_frame(AVCodecContext *avctx,
-                            void *data, int *got_frame,
-                            AVPacket *avpkt)
+static int xan_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                            int *got_frame, AVPacket *avpkt)
 {
-    AVFrame *frame = data;
     const uint8_t *buf = avpkt->data;
     int ret, buf_size = avpkt->size;
     XanContext *s = avctx->priv_data;
@@ -639,14 +634,15 @@ static int xan_decode_frame(AVCodecContext *avctx,
     return buf_size;
 }
 
-AVCodec ff_xan_wc3_decoder = {
-    .name           = "xan_wc3",
-    .long_name      = NULL_IF_CONFIG_SMALL("Wing Commander III / Xan"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_XAN_WC3,
+const FFCodec ff_xan_wc3_decoder = {
+    .p.name         = "xan_wc3",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Wing Commander III / Xan"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_XAN_WC3,
     .priv_data_size = sizeof(XanContext),
     .init           = xan_decode_init,
     .close          = xan_decode_end,
-    .decode         = xan_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(xan_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_INIT_THREADSAFE,
 };

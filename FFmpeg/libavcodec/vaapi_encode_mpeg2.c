@@ -20,10 +20,12 @@
 #include <va/va_enc_mpeg2.h>
 
 #include "libavutil/avassert.h"
+#include "libavutil/opt.h"
 
 #include "avcodec.h"
 #include "cbs.h"
 #include "cbs_mpeg2.h"
+#include "codec_internal.h"
 #include "mpeg12.h"
 #include "vaapi_encode.h"
 
@@ -93,10 +95,9 @@ static int vaapi_encode_mpeg2_add_header(AVCodecContext *avctx,
                                          CodedBitstreamFragment *frag,
                                          int type, void *header)
 {
-    VAAPIEncodeMPEG2Context *priv = avctx->priv_data;
     int err;
 
-    err = ff_cbs_insert_unit_content(priv->cbc, frag, -1, type, header, NULL);
+    err = ff_cbs_insert_unit_content(frag, -1, type, header, NULL);
     if (err < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to add header: "
                "type = %d.\n", type);
@@ -135,7 +136,7 @@ static int vaapi_encode_mpeg2_write_sequence_header(AVCodecContext *avctx,
 
     err = vaapi_encode_mpeg2_write_fragment(avctx, data, data_len, frag);
 fail:
-    ff_cbs_fragment_reset(priv->cbc, frag);
+    ff_cbs_fragment_reset(frag);
     return 0;
 }
 
@@ -159,7 +160,7 @@ static int vaapi_encode_mpeg2_write_picture_header(AVCodecContext *avctx,
 
     err = vaapi_encode_mpeg2_write_fragment(avctx, data, data_len, frag);
 fail:
-    ff_cbs_fragment_reset(priv->cbc, frag);
+    ff_cbs_fragment_reset(frag);
     return 0;
 }
 
@@ -293,17 +294,16 @@ static int vaapi_encode_mpeg2_init_sequence_params(AVCodecContext *avctx)
     priv->sequence_display_extension.extension_start_code_identifier =
         MPEG2_EXTENSION_SEQUENCE_DISPLAY;
 
+    // Unspecified video format, from table 6-6.
     sde->video_format = 5;
-    if (avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+
+    sde->colour_primaries         = avctx->color_primaries;
+    sde->transfer_characteristics = avctx->color_trc;
+    sde->matrix_coefficients      = avctx->colorspace;
+    sde->colour_description       =
+        avctx->color_primaries != AVCOL_PRI_UNSPECIFIED ||
         avctx->color_trc       != AVCOL_TRC_UNSPECIFIED ||
-        avctx->colorspace      != AVCOL_SPC_UNSPECIFIED) {
-        sde->colour_description       = 1;
-        sde->colour_primaries         = avctx->color_primaries;
-        sde->transfer_characteristics = avctx->color_trc;
-        sde->matrix_coefficients      = avctx->colorspace;
-    } else {
-        sde->colour_description = 0;
-    }
+        avctx->colorspace      != AVCOL_SPC_UNSPECIFIED;
 
     sde->display_horizontal_size = avctx->width;
     sde->display_vertical_size   = avctx->height;
@@ -552,6 +552,8 @@ static av_cold int vaapi_encode_mpeg2_configure(AVCodecContext *avctx)
     ctx->nb_slices  = ctx->slice_block_rows;
     ctx->slice_size = 1;
 
+    ctx->roi_quant_range = 31;
+
     return 0;
 }
 
@@ -621,9 +623,6 @@ static av_cold int vaapi_encode_mpeg2_init(AVCodecContext *avctx)
     ctx->desired_packed_headers = VA_ENC_PACKED_HEADER_SEQUENCE |
                                   VA_ENC_PACKED_HEADER_PICTURE;
 
-    ctx->surface_width  = FFALIGN(avctx->width,  16);
-    ctx->surface_height = FFALIGN(avctx->height, 16);
-
     return ff_vaapi_encode_init(avctx);
 }
 
@@ -631,7 +630,7 @@ static av_cold int vaapi_encode_mpeg2_close(AVCodecContext *avctx)
 {
     VAAPIEncodeMPEG2Context *priv = avctx->priv_data;
 
-    ff_cbs_fragment_free(priv->cbc, &priv->current_fragment);
+    ff_cbs_fragment_free(&priv->current_fragment);
     ff_cbs_close(&priv->cbc);
 
     return ff_vaapi_encode_close(avctx);
@@ -668,7 +667,7 @@ static const AVOption vaapi_encode_mpeg2_options[] = {
     { NULL },
 };
 
-static const AVCodecDefault vaapi_encode_mpeg2_defaults[] = {
+static const FFCodecDefault vaapi_encode_mpeg2_defaults[] = {
     { "b",              "0"   },
     { "bf",             "1"   },
     { "g",              "120" },
@@ -688,22 +687,24 @@ static const AVClass vaapi_encode_mpeg2_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_mpeg2_vaapi_encoder = {
-    .name           = "mpeg2_vaapi",
-    .long_name      = NULL_IF_CONFIG_SMALL("MPEG-2 (VAAPI)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_MPEG2VIDEO,
+const FFCodec ff_mpeg2_vaapi_encoder = {
+    .p.name         = "mpeg2_vaapi",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("MPEG-2 (VAAPI)"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MPEG2VIDEO,
     .priv_data_size = sizeof(VAAPIEncodeMPEG2Context),
     .init           = &vaapi_encode_mpeg2_init,
-    .send_frame     = &ff_vaapi_encode_send_frame,
-    .receive_packet = &ff_vaapi_encode_receive_packet,
+    FF_CODEC_RECEIVE_PACKET_CB(&ff_vaapi_encode_receive_packet),
     .close          = &vaapi_encode_mpeg2_close,
-    .priv_class     = &vaapi_encode_mpeg2_class,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE,
+    .p.priv_class   = &vaapi_encode_mpeg2_class,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_HARDWARE |
+                      AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .defaults       = vaapi_encode_mpeg2_defaults,
-    .pix_fmts = (const enum AVPixelFormat[]) {
+    .p.pix_fmts = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_VAAPI,
         AV_PIX_FMT_NONE,
     },
-    .wrapper_name   = "vaapi",
+    .hw_configs     = ff_vaapi_encode_hw_configs,
+    .p.wrapper_name = "vaapi",
 };

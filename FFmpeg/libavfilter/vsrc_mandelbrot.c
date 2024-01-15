@@ -88,10 +88,10 @@ typedef struct MBContext {
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
 
 static const AVOption mandelbrot_options[] = {
-    {"size",        "set frame size",                OFFSET(w),       AV_OPT_TYPE_IMAGE_SIZE, {.str="640x480"},  CHAR_MIN, CHAR_MAX, FLAGS },
-    {"s",           "set frame size",                OFFSET(w),       AV_OPT_TYPE_IMAGE_SIZE, {.str="640x480"},  CHAR_MIN, CHAR_MAX, FLAGS },
-    {"rate",        "set frame rate",                OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"},  CHAR_MIN, CHAR_MAX, FLAGS },
-    {"r",           "set frame rate",                OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"},  CHAR_MIN, CHAR_MAX, FLAGS },
+    {"size",        "set frame size",                OFFSET(w),       AV_OPT_TYPE_IMAGE_SIZE, {.str="640x480"},  0, 0, FLAGS },
+    {"s",           "set frame size",                OFFSET(w),       AV_OPT_TYPE_IMAGE_SIZE, {.str="640x480"},  0, 0, FLAGS },
+    {"rate",        "set frame rate",                OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"},  0, INT_MAX, FLAGS },
+    {"r",           "set frame rate",                OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str="25"},  0, INT_MAX, FLAGS },
     {"maxiter",     "set max iterations number",     OFFSET(maxiter), AV_OPT_TYPE_INT,        {.i64=7189},  1,        INT_MAX, FLAGS },
     {"start_x",     "set the initial x position",    OFFSET(start_x), AV_OPT_TYPE_DOUBLE,     {.dbl=-0.743643887037158704752191506114774}, -100, 100, FLAGS },
     {"start_y",     "set the initial y position",    OFFSET(start_y), AV_OPT_TYPE_DOUBLE,     {.dbl=-0.131825904205311970493132056385139}, -100, 100, FLAGS },
@@ -135,6 +135,9 @@ static av_cold int init(AVFilterContext *ctx)
     s-> next_cache= av_malloc_array(s->cache_allocated, sizeof(*s-> next_cache));
     s-> zyklus    = av_malloc_array(s->maxiter + 16, sizeof(*s->zyklus));
 
+    if (!s->point_cache || !s->next_cache || !s->zyklus)
+        return AVERROR(ENOMEM);
+
     return 0;
 }
 
@@ -147,30 +150,18 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&s->zyklus);
 }
 
-static int query_formats(AVFilterContext *ctx)
+static int config_props(AVFilterLink *outlink)
 {
-    static const enum AVPixelFormat pix_fmts[] = {
-        AV_PIX_FMT_0BGR32,
-        AV_PIX_FMT_NONE
-    };
-
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
-}
-
-static int config_props(AVFilterLink *inlink)
-{
-    AVFilterContext *ctx = inlink->src;
+    AVFilterContext *ctx = outlink->src;
     MBContext *s = ctx->priv;
 
     if (av_image_check_size(s->w, s->h, 0, ctx) < 0)
         return AVERROR(EINVAL);
 
-    inlink->w = s->w;
-    inlink->h = s->h;
-    inlink->time_base = av_inv_q(s->frame_rate);
+    outlink->w = s->w;
+    outlink->h = s->h;
+    outlink->time_base = av_inv_q(s->frame_rate);
+    outlink->frame_rate = s->frame_rate;
 
     return 0;
 }
@@ -417,17 +408,16 @@ static const AVFilterPad mandelbrot_outputs[] = {
         .request_frame = request_frame,
         .config_props  = config_props,
     },
-    { NULL }
 };
 
-AVFilter ff_vsrc_mandelbrot = {
+const AVFilter ff_vsrc_mandelbrot = {
     .name          = "mandelbrot",
     .description   = NULL_IF_CONFIG_SMALL("Render a Mandelbrot fractal."),
     .priv_size     = sizeof(MBContext),
     .priv_class    = &mandelbrot_class,
     .init          = init,
     .uninit        = uninit,
-    .query_formats = query_formats,
     .inputs        = NULL,
-    .outputs       = mandelbrot_outputs,
+    FILTER_OUTPUTS(mandelbrot_outputs),
+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_0BGR32),
 };

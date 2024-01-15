@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/channel_layout.h"
 #include "libavutil/crc.h"
 #include "libavutil/intreadwrite.h"
 
@@ -165,6 +166,9 @@ int ff_tak_decode_frame_header(AVCodecContext *avctx, GetBitContext *gb,
     }
 
     if (ti->flags & TAK_FRAME_FLAG_HAS_METADATA)
+        return AVERROR_INVALIDDATA;
+
+    if (get_bits_left(gb) < 24)
         return AVERROR_INVALIDDATA;
 
     skip_bits(gb, 24);

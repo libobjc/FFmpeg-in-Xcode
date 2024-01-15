@@ -25,7 +25,7 @@
 
 
 typedef struct H265LevelDescriptor {
-    const char *name;
+    char        name[4];    // Large enough for all current levels like "4.1"
     uint8_t     level_idc;
 
     // Table A.6.
@@ -69,8 +69,6 @@ typedef struct H265ProfileDescriptor {
     uint8_t max_dpb_pic_buf;
 } H265ProfileDescriptor;
 
-
-const H265LevelDescriptor *ff_h265_get_level(int level_idc);
 
 const H265ProfileDescriptor *ff_h265_get_profile(const H265RawProfileTierLevel *ptl);
 

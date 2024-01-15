@@ -22,12 +22,14 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/internal.h"
+#include "libavutil/mem_internal.h"
 #include "avcodec.h"
 #include "copy_block.h"
 #include "simple_idct.h"
 #include "me_cmp.h"
-#include "mpegvideo.h"
+#include "mpegvideoenc.h"
 #include "config.h"
+#include "config_components.h"
 
 /* (i - 256) * (i - 256) */
 const uint32_t ff_square_tab[512] = {
@@ -471,8 +473,9 @@ static int zero_cmp(MpegEncContext *s, uint8_t *a, uint8_t *b,
     return 0;
 }
 
-void ff_set_cmp(MECmpContext *c, me_cmp_func *cmp, int type)
+int ff_set_cmp(MECmpContext *c, me_cmp_func *cmp, int type)
 {
+    int ret = 0;
     int i;
 
     memset(cmp, 0, sizeof(void *) * 6);
@@ -531,9 +534,13 @@ void ff_set_cmp(MECmpContext *c, me_cmp_func *cmp, int type)
 #endif
         default:
             av_log(NULL, AV_LOG_ERROR,
-                   "internal error in cmp function selection\n");
+                   "invalid cmp function selection\n");
+            ret = -1;
+            break;
         }
     }
+
+    return ret;
 }
 
 #define BUTTERFLY2(o1, o2, i1, i2)              \
@@ -1011,31 +1018,8 @@ WRAPPER8_16_SQ(quant_psnr8x8_c, quant_psnr16_c)
 WRAPPER8_16_SQ(rd8x8_c, rd16_c)
 WRAPPER8_16_SQ(bit8x8_c, bit16_c)
 
-int ff_check_alignment(void)
-{
-    static int did_fail = 0;
-    LOCAL_ALIGNED_16(int, aligned, [4]);
-
-    if ((intptr_t)aligned & 15) {
-        if (!did_fail) {
-#if HAVE_MMX || HAVE_ALTIVEC
-            av_log(NULL, AV_LOG_ERROR,
-                "Compiler did not align stack variables. Libavcodec has been miscompiled\n"
-                "and may be very slow or crash. This is not a bug in libavcodec,\n"
-                "but in the compiler. You may try recompiling using gcc >= 4.2.\n"
-                "Do not report crashes to FFmpeg developers.\n");
-#endif
-            did_fail=1;
-        }
-        return -1;
-    }
-    return 0;
-}
-
 av_cold void ff_me_cmp_init(MECmpContext *c, AVCodecContext *avctx)
 {
-    ff_check_alignment();
-
     c->sum_abs_dctelem = sum_abs_dctelem_c;
 
     /* TODO [0] 16  [1] 8 */
@@ -1082,16 +1066,19 @@ av_cold void ff_me_cmp_init(MECmpContext *c, AVCodecContext *avctx)
     ff_dsputil_init_dwt(c);
 #endif
 
-    if (ARCH_ALPHA)
-        ff_me_cmp_init_alpha(c, avctx);
-    if (ARCH_ARM)
-        ff_me_cmp_init_arm(c, avctx);
-    if (ARCH_PPC)
-        ff_me_cmp_init_ppc(c, avctx);
-    if (ARCH_X86)
-        ff_me_cmp_init_x86(c, avctx);
-    if (ARCH_MIPS)
-        ff_me_cmp_init_mips(c, avctx);
+#if ARCH_AARCH64
+    ff_me_cmp_init_aarch64(c, avctx);
+#elif ARCH_ALPHA
+    ff_me_cmp_init_alpha(c, avctx);
+#elif ARCH_ARM
+    ff_me_cmp_init_arm(c, avctx);
+#elif ARCH_PPC
+    ff_me_cmp_init_ppc(c, avctx);
+#elif ARCH_X86
+    ff_me_cmp_init_x86(c, avctx);
+#elif ARCH_MIPS
+    ff_me_cmp_init_mips(c, avctx);
+#endif
 
     c->median_sad[0] = pix_median_abs16_c;
     c->median_sad[1] = pix_median_abs8_c;

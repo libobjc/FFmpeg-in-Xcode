@@ -26,7 +26,7 @@
 #include "libavutil/attributes.h"
 #include "libavutil/cpu.h"
 #include "libavutil/intreadwrite.h"
-#include "libavutil/mem.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/ppc/cpu.h"
 #include "libavutil/ppc/util_altivec.h"
 
@@ -328,7 +328,7 @@ static void h264_idct8_dc_add_altivec(uint8_t *dst, int16_t *block, int stride)
 
 static void h264_idct_add16_altivec(uint8_t *dst, const int *block_offset,
                                     int16_t *block, int stride,
-                                    const uint8_t nnzc[15 * 8])
+                                    const uint8_t nnzc[5 * 8])
 {
     int i;
     for(i=0; i<16; i++){
@@ -342,7 +342,7 @@ static void h264_idct_add16_altivec(uint8_t *dst, const int *block_offset,
 
 static void h264_idct_add16intra_altivec(uint8_t *dst, const int *block_offset,
                                          int16_t *block, int stride,
-                                         const uint8_t nnzc[15 * 8])
+                                         const uint8_t nnzc[5 * 8])
 {
     int i;
     for(i=0; i<16; i++){
@@ -353,7 +353,7 @@ static void h264_idct_add16intra_altivec(uint8_t *dst, const int *block_offset,
 
 static void h264_idct8_add4_altivec(uint8_t *dst, const int *block_offset,
                                     int16_t *block, int stride,
-                                    const uint8_t nnzc[15 * 8])
+                                    const uint8_t nnzc[5 * 8])
 {
     int i;
     for(i=0; i<16; i+=4){

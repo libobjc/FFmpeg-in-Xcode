@@ -156,7 +156,6 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     for (i = 0; i < 2; i++)
         cnonce_buf[i] = av_get_random_seed();
     ff_data_to_hex(cnonce, (const uint8_t*) cnonce_buf, sizeof(cnonce_buf), 1);
-    cnonce[2*sizeof(cnonce_buf)] = 0;
 
     md5ctx = av_md5_alloc();
     if (!md5ctx)
@@ -166,7 +165,6 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     update_md5_strings(md5ctx, username, ":", state->realm, ":", password, NULL);
     av_md5_final(md5ctx, hash);
     ff_data_to_hex(A1hash, hash, 16, 1);
-    A1hash[32] = 0;
 
     if (!strcmp(digest->algorithm, "") || !strcmp(digest->algorithm, "MD5")) {
     } else if (!strcmp(digest->algorithm, "MD5-sess")) {
@@ -174,7 +172,6 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
         update_md5_strings(md5ctx, A1hash, ":", digest->nonce, ":", cnonce, NULL);
         av_md5_final(md5ctx, hash);
         ff_data_to_hex(A1hash, hash, 16, 1);
-        A1hash[32] = 0;
     } else {
         /* Unsupported algorithm */
         av_free(md5ctx);
@@ -185,7 +182,6 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     update_md5_strings(md5ctx, method, ":", uri, NULL);
     av_md5_final(md5ctx, hash);
     ff_data_to_hex(A2hash, hash, 16, 1);
-    A2hash[32] = 0;
 
     av_md5_init(md5ctx);
     update_md5_strings(md5ctx, A1hash, ":", digest->nonce, NULL);
@@ -195,7 +191,6 @@ static char *make_digest_auth(HTTPAuthState *state, const char *username,
     update_md5_strings(md5ctx, ":", A2hash, NULL);
     av_md5_final(md5ctx, hash);
     ff_data_to_hex(response, hash, 16, 1);
-    response[32] = 0;
 
     av_free(md5ctx);
 
@@ -255,7 +250,7 @@ char *ff_http_auth_create_response(HTTPAuthState *state, const char *auth,
 
     if (state->auth_type == HTTP_AUTH_BASIC) {
         int auth_b64_len, len;
-        char *ptr, *decoded_auth = ff_urldecode(auth);
+        char *ptr, *decoded_auth = ff_urldecode(auth, 0);
 
         if (!decoded_auth)
             return NULL;
@@ -275,7 +270,7 @@ char *ff_http_auth_create_response(HTTPAuthState *state, const char *auth,
         av_strlcat(ptr, "\r\n", len - (ptr - authstr));
         av_free(decoded_auth);
     } else if (state->auth_type == HTTP_AUTH_DIGEST) {
-        char *username = ff_urldecode(auth), *password;
+        char *username = ff_urldecode(auth, 0), *password;
 
         if (!username)
             return NULL;

@@ -29,8 +29,10 @@
 
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_vaapi.h"
+#include "libavutil/fifo.h"
 
 #include "avcodec.h"
+#include "hwconfig.h"
 
 struct VAAPIEncodeType;
 struct VAAPIEncodePicture;
@@ -42,7 +44,14 @@ enum {
     MAX_PICTURE_REFERENCES = 2,
     MAX_REORDER_DELAY      = 16,
     MAX_PARAM_BUFFER_SIZE  = 1024,
+    // A.4.1: table A.6 allows at most 22 tile rows for any level.
+    MAX_TILE_ROWS          = 22,
+    // A.4.1: table A.6 allows at most 20 tile columns for any level.
+    MAX_TILE_COLS          = 20,
+    MAX_ASYNC_DEPTH        = 64,
 };
+
+extern const AVCodecHWConfigInternal *const ff_vaapi_encode_hw_configs[];
 
 enum {
     PICTURE_TYPE_IDR = 0,
@@ -57,7 +66,6 @@ typedef struct VAAPIEncodeSlice {
     int             row_size;
     int             block_start;
     int             block_size;
-    void           *priv_data;
     void           *codec_slice_params;
 } VAAPIEncodeSlice;
 
@@ -68,6 +76,13 @@ typedef struct VAAPIEncodePicture {
     int64_t         encode_order;
     int64_t         pts;
     int             force_idr;
+
+#if VA_CHECK_VERSION(1, 0, 0)
+    // ROI regions.
+    VAEncROI       *roi;
+#else
+    void           *roi;
+#endif
 
     int             type;
     int             b_depth;
@@ -176,6 +191,9 @@ typedef struct VAAPIEncodeContext {
     // Desired B frame reference depth.
     int             desired_b_depth;
 
+    // Max Frame Size
+    int             max_frame_size;
+
     // Explicitly set RC mode (otherwise attempt to pick from
     // available modes).
     int             explicit_rc_mode;
@@ -253,6 +271,7 @@ typedef struct VAAPIEncodeContext {
     VAEncMiscParameterRateControl rc_params;
     VAEncMiscParameterHRD        hrd_params;
     VAEncMiscParameterFrameRate   fr_params;
+    VAEncMiscParameterBufferMaxFrameSize mfs_params;
 #if VA_CHECK_VERSION(0, 36, 0)
     VAEncMiscParameterBufferQualityLevel quality_params;
 #endif
@@ -284,13 +303,26 @@ typedef struct VAAPIEncodeContext {
     // Timestamp handling.
     int64_t         first_pts;
     int64_t         dts_pts_diff;
-    int64_t         ts_ring[MAX_REORDER_DELAY * 3];
+    int64_t         ts_ring[MAX_REORDER_DELAY * 3 +
+                            MAX_ASYNC_DEPTH];
 
     // Slice structure.
     int slice_block_rows;
     int slice_block_cols;
     int nb_slices;
     int slice_size;
+
+    // Tile encoding.
+    int tile_cols;
+    int tile_rows;
+    // Tile width of the i-th column.
+    int col_width[MAX_TILE_COLS];
+    // Tile height of i-th row.
+    int row_height[MAX_TILE_ROWS];
+    // Location of the i-th tile column boundary.
+    int col_bd[MAX_TILE_COLS + 1];
+    // Location of the i-th tile row boundary.
+    int row_bd[MAX_TILE_ROWS + 1];
 
     // Frame type decision.
     int gop_size;
@@ -303,10 +335,31 @@ typedef struct VAAPIEncodeContext {
     int idr_counter;
     int gop_counter;
     int end_of_stream;
+    int p_to_gpb;
+
+    // Whether the driver supports ROI at all.
+    int             roi_allowed;
+    // Maximum number of regions supported by the driver.
+    int             roi_max_regions;
+    // Quantisation range for offset calculations.  Set by codec-specific
+    // code, as it may change based on parameters.
+    int             roi_quant_range;
 
     // The encoder does not support cropping information, so warn about
     // it the first time we encounter any nonzero crop fields.
     int             crop_warned;
+    // If the driver does not support ROI then warn the first time we
+    // encounter a frame with ROI side data.
+    int             roi_warned;
+
+    AVFrame         *frame;
+
+    // Whether the driver support vaSyncBuffer
+    int             has_sync_buffer_func;
+    // Store buffered pic
+    AVFifo          *encode_fifo;
+    // Max number of frame buffered in encoder.
+    int             async_depth;
 } VAAPIEncodeContext;
 
 enum {
@@ -336,6 +389,13 @@ typedef struct VAAPIEncodeType {
     // Default quality for this codec - used as quantiser or RC quality
     // factor depending on RC mode.
     int default_quality;
+
+    // Determine encode parameters like block sizes for surface alignment
+    // and slices. This may need to query the profile and entrypoint,
+    // which will be available when this function is called. If not set,
+    // assume that all blocks are 16x16 and that surfaces should be
+    // aligned to match this.
+    int (*get_encoder_caps)(AVCodecContext *avctx);
 
     // Perform any extra codec-specific configuration after the
     // codec context is initialised (set up the private data and
@@ -398,7 +458,6 @@ typedef struct VAAPIEncodeType {
 } VAAPIEncodeType;
 
 
-int ff_vaapi_encode_send_frame(AVCodecContext *avctx, const AVFrame *frame);
 int ff_vaapi_encode_receive_packet(AVCodecContext *avctx, AVPacket *pkt);
 
 int ff_vaapi_encode_init(AVCodecContext *avctx);
@@ -418,7 +477,16 @@ int ff_vaapi_encode_close(AVCodecContext *avctx);
     { "b_depth", \
       "Maximum B-frame reference depth", \
       OFFSET(common.desired_b_depth), AV_OPT_TYPE_INT, \
-      { .i64 = 1 }, 1, INT_MAX, FLAGS }
+      { .i64 = 1 }, 1, INT_MAX, FLAGS }, \
+    { "async_depth", "Maximum processing parallelism. " \
+      "Increase this to improve single channel performance. This option " \
+      "doesn't work if driver doesn't implement vaSyncBuffer function.", \
+      OFFSET(common.async_depth), AV_OPT_TYPE_INT, \
+      { .i64 = 2 }, 1, MAX_ASYNC_DEPTH, FLAGS }, \
+    { "max_frame_size", \
+      "Maximum frame size (in bytes)",\
+      OFFSET(common.max_frame_size), AV_OPT_TYPE_INT, \
+      { .i64 = 0 }, 0, INT_MAX, FLAGS }
 
 #define VAAPI_ENCODE_RC_MODE(name, desc) \
     { #name, desc, 0, AV_OPT_TYPE_CONST, { .i64 = RC_MODE_ ## name }, \

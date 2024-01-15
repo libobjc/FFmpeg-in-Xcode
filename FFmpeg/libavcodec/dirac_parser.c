@@ -215,7 +215,7 @@ static int dirac_combine_frame(AVCodecParserContext *s, AVCodecContext *avctx,
             int64_t pts = AV_RB32(cur_pu + 13);
             if (s->last_pts == 0 && s->last_dts == 0)
                 s->dts = pts - 1;
-            else
+            else if (s->last_dts != AV_NOPTS_VALUE)
                 s->dts = s->last_dts + 1;
             s->pts = pts;
             if (!avctx->has_b_frames && (cur_pu[4] & 0x03))
@@ -273,7 +273,7 @@ static void dirac_parse_close(AVCodecParserContext *s)
         av_freep(&pc->buffer);
 }
 
-AVCodecParser ff_dirac_parser = {
+const AVCodecParser ff_dirac_parser = {
     .codec_ids      = { AV_CODEC_ID_DIRAC },
     .priv_data_size = sizeof(DiracParseContext),
     .parser_parse   = dirac_parse,

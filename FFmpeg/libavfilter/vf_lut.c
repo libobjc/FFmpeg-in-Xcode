@@ -24,6 +24,8 @@
  * value, and apply it to input video.
  */
 
+#include "config_components.h"
+
 #include "libavutil/attributes.h"
 #include "libavutil/bswap.h"
 #include "libavutil/common.h"
@@ -69,7 +71,6 @@ typedef struct LutContext {
     int is_planar;
     int is_16bit;
     int step;
-    int negate_alpha; /* only used by negate */
 } LutContext;
 
 #define Y 0
@@ -81,7 +82,7 @@ typedef struct LutContext {
 #define A 3
 
 #define OFFSET(x) offsetof(LutContext, x)
-#define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
+#define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption options[] = {
     { "c0", "set component #0 expression", OFFSET(comp_expr_str[0]),  AV_OPT_TYPE_STRING, { .str = "clipval" }, .flags = FLAGS },
@@ -150,10 +151,7 @@ static int query_formats(AVFilterContext *ctx)
     const enum AVPixelFormat *pix_fmts = s->is_rgb ? rgb_pix_fmts :
                                                      s->is_yuv ? yuv_pix_fmts :
                                                                  all_pix_fmts;
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
+    return ff_set_common_formats_from_list(ctx, pix_fmts);
 }
 
 /**
@@ -541,23 +539,23 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     if (s->is_rgb && s->is_16bit && !s->is_planar) {
         /* packed, 16-bit */
         PACKED_THREAD_DATA
-        ctx->internal->execute(ctx, lut_packed_16bits, &td, NULL,
-                               FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, lut_packed_16bits, &td, NULL,
+                          FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
     } else if (s->is_rgb && !s->is_planar) {
         /* packed 8 bits */
         PACKED_THREAD_DATA
-        ctx->internal->execute(ctx, lut_packed_8bits, &td, NULL,
-                               FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, lut_packed_8bits, &td, NULL,
+                          FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
     } else if (s->is_16bit) {
         /* planar >8 bit depth */
         PLANAR_THREAD_DATA
-        ctx->internal->execute(ctx, lut_planar_16bits, &td, NULL,
-                               FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, lut_planar_16bits, &td, NULL,
+                          FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
     } else {
         /* planar 8bit depth */
         PLANAR_THREAD_DATA
-        ctx->internal->execute(ctx, lut_planar_8bits, &td, NULL,
-                               FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
+        ff_filter_execute(ctx, lut_planar_8bits, &td, NULL,
+                          FFMIN(in->height, ff_filter_get_nb_threads(ctx)));
     }
 
     if (!direct)
@@ -566,52 +564,57 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     return ff_filter_frame(outlink, out);
 }
 
+static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
+                           char *res, int res_len, int flags)
+{
+    int ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
+
+    if (ret < 0)
+        return ret;
+
+    return config_props(ctx->inputs[0]);
+}
+
 static const AVFilterPad inputs[] = {
     { .name         = "default",
       .type         = AVMEDIA_TYPE_VIDEO,
       .filter_frame = filter_frame,
       .config_props = config_props,
     },
-    { NULL }
 };
 static const AVFilterPad outputs[] = {
     { .name = "default",
       .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-#define DEFINE_LUT_FILTER(name_, description_)                          \
-    AVFilter ff_vf_##name_ = {                                          \
+#define DEFINE_LUT_FILTER(name_, description_, priv_class_)             \
+    const AVFilter ff_vf_##name_ = {                                    \
         .name          = #name_,                                        \
         .description   = NULL_IF_CONFIG_SMALL(description_),            \
+        .priv_class    = &priv_class_ ## _class,                        \
         .priv_size     = sizeof(LutContext),                            \
-        .priv_class    = &name_ ## _class,                              \
         .init          = name_##_init,                                  \
         .uninit        = uninit,                                        \
-        .query_formats = query_formats,                                 \
-        .inputs        = inputs,                                        \
-        .outputs       = outputs,                                       \
-        .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,        \
+        FILTER_INPUTS(inputs),                                          \
+        FILTER_OUTPUTS(outputs),                                        \
+        FILTER_QUERY_FUNC(query_formats),                               \
+        .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC |       \
+                         AVFILTER_FLAG_SLICE_THREADS,                   \
+        .process_command = process_command,                             \
     }
+
+AVFILTER_DEFINE_CLASS_EXT(lut, "lut/lutyuv/lutrgb", options);
 
 #if CONFIG_LUT_FILTER
 
-#define lut_options options
-AVFILTER_DEFINE_CLASS(lut);
-
-static int lut_init(AVFilterContext *ctx)
-{
-    return 0;
-}
-
-DEFINE_LUT_FILTER(lut, "Compute and apply a lookup table to the RGB/YUV input video.");
+#define lut_init NULL
+DEFINE_LUT_FILTER(lut, "Compute and apply a lookup table to the RGB/YUV input video.",
+                  lut);
+#undef lut_init
 #endif
 
 #if CONFIG_LUTYUV_FILTER
-
-#define lutyuv_options options
-AVFILTER_DEFINE_CLASS(lutyuv);
 
 static av_cold int lutyuv_init(AVFilterContext *ctx)
 {
@@ -622,13 +625,11 @@ static av_cold int lutyuv_init(AVFilterContext *ctx)
     return 0;
 }
 
-DEFINE_LUT_FILTER(lutyuv, "Compute and apply a lookup table to the YUV input video.");
+DEFINE_LUT_FILTER(lutyuv, "Compute and apply a lookup table to the YUV input video.",
+                  lut);
 #endif
 
 #if CONFIG_LUTRGB_FILTER
-
-#define lutrgb_options options
-AVFILTER_DEFINE_CLASS(lutrgb);
 
 static av_cold int lutrgb_init(AVFilterContext *ctx)
 {
@@ -639,37 +640,6 @@ static av_cold int lutrgb_init(AVFilterContext *ctx)
     return 0;
 }
 
-DEFINE_LUT_FILTER(lutrgb, "Compute and apply a lookup table to the RGB input video.");
-#endif
-
-#if CONFIG_NEGATE_FILTER
-
-static const AVOption negate_options[] = {
-    { "negate_alpha", NULL, OFFSET(negate_alpha), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
-    { NULL }
-};
-
-AVFILTER_DEFINE_CLASS(negate);
-
-static av_cold int negate_init(AVFilterContext *ctx)
-{
-    LutContext *s = ctx->priv;
-    int i;
-
-    av_log(ctx, AV_LOG_DEBUG, "negate_alpha:%d\n", s->negate_alpha);
-
-    for (i = 0; i < 4; i++) {
-        s->comp_expr_str[i] = av_strdup((i == 3 && !s->negate_alpha) ?
-                                          "val" : "negval");
-        if (!s->comp_expr_str[i]) {
-            uninit(ctx);
-            return AVERROR(ENOMEM);
-        }
-    }
-
-    return 0;
-}
-
-DEFINE_LUT_FILTER(negate, "Negate input video.");
-
+DEFINE_LUT_FILTER(lutrgb, "Compute and apply a lookup table to the RGB input video.",
+                  lut);
 #endif

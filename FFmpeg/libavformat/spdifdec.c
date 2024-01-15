@@ -27,7 +27,7 @@
 
 #include "libavutil/bswap.h"
 
-#include "libavcodec/ac3.h"
+#include "libavcodec/ac3defs.h"
 #include "libavcodec/adts_parser.h"
 
 #include "avformat.h"
@@ -197,15 +197,13 @@ int ff_spdif_read_packet(AVFormatContext *s, AVPacket *pkt)
     pkt->pos = avio_tell(pb) - BURST_HEADER_SIZE;
 
     if (avio_read(pb, pkt->data, pkt->size) < pkt->size) {
-        av_packet_unref(pkt);
         return AVERROR_EOF;
     }
     ff_spdif_bswap_buf16((uint16_t *)pkt->data, (uint16_t *)pkt->data, pkt->size >> 1);
 
     ret = spdif_get_offset_and_codec(s, data_type, pkt->data,
                                      &offset, &codec_id);
-    if (ret) {
-        av_packet_unref(pkt);
+    if (ret < 0) {
         return ret;
     }
 
@@ -216,7 +214,6 @@ int ff_spdif_read_packet(AVFormatContext *s, AVPacket *pkt)
         /* first packet, create a stream */
         AVStream *st = avformat_new_stream(s, NULL);
         if (!st) {
-            av_packet_unref(pkt);
             return AVERROR(ENOMEM);
         }
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
@@ -229,12 +226,12 @@ int ff_spdif_read_packet(AVFormatContext *s, AVPacket *pkt)
     if (!s->bit_rate && s->streams[0]->codecpar->sample_rate)
         /* stream bitrate matches 16-bit stereo PCM bitrate for currently
            supported codecs */
-        s->bit_rate = 2 * 16 * s->streams[0]->codecpar->sample_rate;
+        s->bit_rate = 2 * 16LL * s->streams[0]->codecpar->sample_rate;
 
     return 0;
 }
 
-AVInputFormat ff_spdif_demuxer = {
+const AVInputFormat ff_spdif_demuxer = {
     .name           = "spdif",
     .long_name      = NULL_IF_CONFIG_SMALL("IEC 61937 (compressed data in S/PDIF)"),
     .read_probe     = spdif_probe,

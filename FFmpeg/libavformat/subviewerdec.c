@@ -28,7 +28,6 @@
 #include "internal.h"
 #include "subtitles.h"
 #include "avio_internal.h"
-#include "libavcodec/internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
@@ -51,16 +50,32 @@ static int subviewer_probe(const AVProbeData *p)
     return 0;
 }
 
+static int get_multiplier(int e) {
+    switch (e) {
+    case 1  : return 100;
+    case 2  : return 10;
+    case 3  : return 1;
+    default : return -1;
+    }
+}
+
 static int read_ts(const char *s, int64_t *start, int *duration)
 {
     int64_t end;
     int hh1, mm1, ss1, ms1;
     int hh2, mm2, ss2, ms2;
+    int multiplier1, multiplier2;
+    int ms1p1, ms1p2, ms2p1, ms2p2;
 
-    if (sscanf(s, "%u:%u:%u.%u,%u:%u:%u.%u",
-               &hh1, &mm1, &ss1, &ms1, &hh2, &mm2, &ss2, &ms2) == 8) {
-        end    = (hh2*3600LL + mm2*60LL + ss2) * 100LL + ms2;
-        *start = (hh1*3600LL + mm1*60LL + ss1) * 100LL + ms1;
+    if (sscanf(s, "%u:%u:%u.%n%u%n,%u:%u:%u.%n%u%n",
+               &hh1, &mm1, &ss1, &ms1p1, &ms1, &ms1p2, &hh2, &mm2, &ss2, &ms2p1, &ms2, &ms2p2) == 8) {
+        multiplier1 = get_multiplier(ms1p2 - ms1p1);
+        multiplier2 = get_multiplier(ms2p2 - ms2p1);
+        if (multiplier1 <= 0 ||multiplier2 <= 0)
+            return -1;
+
+        end    = (hh2*3600LL + mm2*60LL + ss2) * 1000LL + ms2 * multiplier2;
+        *start = (hh1*3600LL + mm1*60LL + ss1) * 1000LL + ms1 * multiplier1;
         *duration = end - *start;
         return 0;
     }
@@ -84,7 +99,7 @@ static int subviewer_read_header(AVFormatContext *s)
         return res;
     if (avio_rb24(s->pb) != 0xefbbbf)
         avio_seek(s->pb, -3, SEEK_CUR);
-    avpriv_set_pts_info(st, 64, 1, 100);
+    avpriv_set_pts_info(st, 64, 1, 1000);
     st->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
     st->codecpar->codec_id   = AV_CODEC_ID_SUBVIEWER;
 
@@ -138,6 +153,10 @@ static int subviewer_read_header(AVFormatContext *s)
             new_event = 1;
             pos = avio_tell(s->pb);
         } else if (*line) {
+            if (pts_start == AV_NOPTS_VALUE) {
+                res = AVERROR_INVALIDDATA;
+                goto end;
+            }
             if (!new_event) {
                 sub = ff_subtitles_queue_insert(&subviewer->q, "\n", 1, 1);
                 if (!sub) {
@@ -166,35 +185,15 @@ end:
     return res;
 }
 
-static int subviewer_read_packet(AVFormatContext *s, AVPacket *pkt)
-{
-    SubViewerContext *subviewer = s->priv_data;
-    return ff_subtitles_queue_read_packet(&subviewer->q, pkt);
-}
-
-static int subviewer_read_seek(AVFormatContext *s, int stream_index,
-                               int64_t min_ts, int64_t ts, int64_t max_ts, int flags)
-{
-    SubViewerContext *subviewer = s->priv_data;
-    return ff_subtitles_queue_seek(&subviewer->q, s, stream_index,
-                                   min_ts, ts, max_ts, flags);
-}
-
-static int subviewer_read_close(AVFormatContext *s)
-{
-    SubViewerContext *subviewer = s->priv_data;
-    ff_subtitles_queue_clean(&subviewer->q);
-    return 0;
-}
-
-AVInputFormat ff_subviewer_demuxer = {
+const AVInputFormat ff_subviewer_demuxer = {
     .name           = "subviewer",
     .long_name      = NULL_IF_CONFIG_SMALL("SubViewer subtitle format"),
     .priv_data_size = sizeof(SubViewerContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = subviewer_probe,
     .read_header    = subviewer_read_header,
-    .read_packet    = subviewer_read_packet,
-    .read_seek2     = subviewer_read_seek,
-    .read_close     = subviewer_read_close,
     .extensions     = "sub",
+    .read_packet    = ff_subtitles_read_packet,
+    .read_seek2     = ff_subtitles_read_seek,
+    .read_close     = ff_subtitles_read_close,
 };

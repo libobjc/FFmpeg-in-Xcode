@@ -34,9 +34,9 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
+#include "libavutil/bswap.h"
 #include "libavutil/intreadwrite.h"
 
-#include "avcodec.h"
 #include "rangecoder.h"
 
 av_cold void ff_init_range_encoder(RangeCoder *c, uint8_t *buf, int buf_size)
@@ -120,23 +120,4 @@ int ff_rac_terminate(RangeCoder *c, int version)
     av_assert1(c->range >= 0x100);
 
     return c->bytestream - c->bytestream_start;
-}
-
-int ff_rac_check_termination(RangeCoder *c, int version)
-{
-    if (version == 1) {
-        RangeCoder tmp = *c;
-        get_rac(c, (uint8_t[]) { 129 });
-
-        if (c->bytestream == tmp.bytestream && c->bytestream > c->bytestream_start)
-            tmp.low -= *--tmp.bytestream;
-        tmp.bytestream_end = tmp.bytestream;
-
-        if (get_rac(&tmp, (uint8_t[]) { 129 }))
-            return AVERROR_INVALIDDATA;
-    } else {
-        if (c->bytestream_end != c->bytestream)
-            return AVERROR_INVALIDDATA;
-    }
-    return 0;
 }

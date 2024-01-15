@@ -25,8 +25,8 @@
  * extract one of the two textures of the HAQA
  */
 
-#include "avcodec.h"
 #include "bsf.h"
+#include "bsf_internal.h"
 #include "bytestream.h"
 #include "hap.h"
 
@@ -125,10 +125,10 @@ static const AVClass hapqa_extract_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVBitStreamFilter ff_hapqa_extract_bsf = {
-    .name       = "hapqa_extract",
-    .filter     = hapqa_extract,
+const FFBitStreamFilter ff_hapqa_extract_bsf = {
+    .p.name         = "hapqa_extract",
+    .p.codec_ids    = codec_ids,
+    .p.priv_class   = &hapqa_extract_class,
     .priv_data_size = sizeof(HapqaExtractContext),
-    .priv_class = &hapqa_extract_class,
-    .codec_ids  = codec_ids,
+    .filter         = hapqa_extract,
 };

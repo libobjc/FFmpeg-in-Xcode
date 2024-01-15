@@ -24,6 +24,7 @@
 #include "avcodec.h"
 #include "bytestream.h"
 #include "copy_block.h"
+#include "codec_internal.h"
 #include "internal.h"
 
 
@@ -55,6 +56,7 @@ typedef struct PAFVideoDecContext {
 
     int current_frame;
     uint8_t *frame[4];
+    int dirty[4];
     int frame_size;
     int video_size;
 
@@ -103,10 +105,8 @@ static av_cold int paf_video_init(AVCodecContext *avctx)
     c->video_size = avctx->width * avctx->height;
     for (i = 0; i < 4; i++) {
         c->frame[i] = av_mallocz(c->frame_size);
-        if (!c->frame[i]) {
-            paf_video_close(avctx);
+        if (!c->frame[i])
             return AVERROR(ENOMEM);
-        }
     }
 
     return 0;
@@ -159,7 +159,7 @@ static void set_src_position(PAFVideoDecContext *c,
     *pend = c->frame[page] + c->frame_size;
 }
 
-static int decode_0(PAFVideoDecContext *c, uint8_t *pkt, uint8_t code)
+static int decode_0(PAFVideoDecContext *c, const uint8_t *pkt, uint8_t code)
 {
     uint32_t opcode_size, offset;
     uint8_t *dst, *dend, mask = 0, color = 0;
@@ -187,6 +187,7 @@ static int decode_0(PAFVideoDecContext *c, uint8_t *pkt, uint8_t code)
             j      = bytestream2_get_le16(&c->gb) + offset;
             if (bytestream2_get_bytes_left(&c->gb) < (j - offset) * 16)
                 return AVERROR_INVALIDDATA;
+            c->dirty[page] = 1;
             do {
                 offset++;
                 if (dst + 3 * c->width + 4 > dend)
@@ -267,7 +268,7 @@ static int decode_0(PAFVideoDecContext *c, uint8_t *pkt, uint8_t code)
     return 0;
 }
 
-static int paf_video_decode(AVCodecContext *avctx, void *data,
+static int paf_video_decode(AVCodecContext *avctx, AVFrame *rframe,
                             int *got_frame, AVPacket *pkt)
 {
     PAFVideoDecContext *c = avctx->priv_data;
@@ -289,7 +290,7 @@ static int paf_video_decode(AVCodecContext *avctx, void *data,
         c->video_size / 32 - (int64_t)bytestream2_get_bytes_left(&c->gb) > c->video_size / 32 * (int64_t)avctx->discard_damaged_percentage / 100)
         return AVERROR_INVALIDDATA;
 
-    if ((ret = ff_reget_buffer(avctx, c->pic)) < 0)
+    if ((ret = ff_reget_buffer(avctx, c->pic, 0)) < 0)
         return ret;
 
     if (code & 0x20) {  // frame is keyframe
@@ -329,9 +330,13 @@ static int paf_video_decode(AVCodecContext *avctx, void *data,
         c->pic->palette_has_changed = 1;
     }
 
+    c->dirty[c->current_frame] = 1;
     if (code & 0x20)
-        for (i = 0; i < 4; i++)
-            memset(c->frame[i], 0, c->frame_size);
+        for (i = 0; i < 4; i++) {
+            if (c->dirty[i])
+                memset(c->frame[i], 0, c->frame_size);
+            c->dirty[i] = 0;
+        }
 
     switch (code & 0x0F) {
     case 0:
@@ -395,7 +400,7 @@ static int paf_video_decode(AVCodecContext *avctx, void *data,
                         c->width, c->height);
 
     c->current_frame = (c->current_frame + 1) & 3;
-    if ((ret = av_frame_ref(data, c->pic)) < 0)
+    if ((ret = av_frame_ref(rframe, c->pic)) < 0)
         return ret;
 
     *got_frame = 1;
@@ -403,14 +408,15 @@ static int paf_video_decode(AVCodecContext *avctx, void *data,
     return pkt->size;
 }
 
-AVCodec ff_paf_video_decoder = {
-    .name           = "paf_video",
-    .long_name      = NULL_IF_CONFIG_SMALL("Amazing Studio Packed Animation File Video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_PAF_VIDEO,
+const FFCodec ff_paf_video_decoder = {
+    .p.name         = "paf_video",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Amazing Studio Packed Animation File Video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_PAF_VIDEO,
     .priv_data_size = sizeof(PAFVideoDecContext),
     .init           = paf_video_init,
     .close          = paf_video_close,
-    .decode         = paf_video_decode,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(paf_video_decode),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

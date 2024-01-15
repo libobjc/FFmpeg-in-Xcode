@@ -45,10 +45,12 @@
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "exif.h"
 #include "get_bits.h"
 #include "internal.h"
 #include "thread.h"
+#include "tiff_common.h"
 #include "vp8.h"
 
 #define VP8X_FLAG_ANIMATION             0x02
@@ -181,7 +183,10 @@ typedef struct ImageContext {
     uint32_t *color_cache;              /* color cache data */
     int nb_huffman_groups;              /* number of huffman groups */
     HuffReader *huffman_groups;         /* reader for each huffman group */
-    int size_reduction;                 /* relative size compared to primary image, log2 */
+    /* relative size compared to primary image, log2.
+     * for IMAGE_ROLE_COLOR_INDEXING with <= 16 colors, this is log2 of the
+     * number of pixels per byte in the primary image (pixel packing) */
+    int size_reduction;
     int is_alpha_primary;
 } ImageContext;
 
@@ -189,12 +194,13 @@ typedef struct WebPContext {
     VP8Context v;                       /* VP8 Context used for lossy decoding */
     GetBitContext gb;                   /* bitstream reader for main image chunk */
     AVFrame *alpha_frame;               /* AVFrame for alpha data decompressed from VP8L */
+    AVPacket *pkt;                      /* AVPacket to be passed to the underlying VP8 decoder */
     AVCodecContext *avctx;              /* parent AVCodecContext */
     int initialized;                    /* set once the VP8 context is initialized */
     int has_alpha;                      /* has a separate alpha chunk */
     enum AlphaCompression alpha_compression; /* compression type for alpha chunk */
     enum AlphaFilter alpha_filter;      /* filtering method for alpha chunk */
-    uint8_t *alpha_data;                /* alpha chunk data */
+    const uint8_t *alpha_data;          /* alpha chunk data */
     int alpha_data_size;                /* alpha chunk data size */
     int has_exif;                       /* set after an EXIF chunk has been processed */
     int has_iccp;                       /* set after an ICCP chunk has been processed */
@@ -204,7 +210,9 @@ typedef struct WebPContext {
 
     int nb_transforms;                  /* number of transforms */
     enum TransformType transforms[4];   /* transformations used in the image, in order */
-    int reduced_width;                  /* reduced width for index image, if applicable */
+    /* reduced width when using a color indexing transform with <= 16 colors (pixel packing)
+     * before pixels are unpacked, or same as width otherwise. */
+    int reduced_width;
     int nb_huffman_groups;              /* number of huffman groups in the primary image */
     ImageContext image[IMAGE_ROLE_NB];  /* image context for each role */
 } WebPContext;
@@ -232,44 +240,6 @@ static void image_ctx_free(ImageContext *img)
     memset(img, 0, sizeof(*img));
 }
 
-
-/* Differs from get_vlc2() in the following ways:
- *   - codes are bit-reversed
- *   - assumes 8-bit table to make reversal simpler
- *   - assumes max depth of 2 since the max code length for WebP is 15
- */
-static av_always_inline int webp_get_vlc(GetBitContext *gb, VLC_TYPE (*table)[2])
-{
-    int n, nb_bits;
-    unsigned int index;
-    int code;
-
-    OPEN_READER(re, gb);
-    UPDATE_CACHE(re, gb);
-
-    index = SHOW_UBITS(re, gb, 8);
-    index = ff_reverse[index];
-    code  = table[index][0];
-    n     = table[index][1];
-
-    if (n < 0) {
-        LAST_SKIP_BITS(re, gb, 8);
-        UPDATE_CACHE(re, gb);
-
-        nb_bits = -n;
-
-        index = SHOW_UBITS(re, gb, nb_bits);
-        index = (ff_reverse[index] >> (8 - nb_bits)) + code;
-        code  = table[index][0];
-        n     = table[index][1];
-    }
-    SKIP_BITS(re, gb, n);
-
-    CLOSE_READER(re, gb);
-
-    return code;
-}
-
 static int huff_reader_get_symbol(HuffReader *r, GetBitContext *gb)
 {
     if (r->simple) {
@@ -278,10 +248,10 @@ static int huff_reader_get_symbol(HuffReader *r, GetBitContext *gb)
         else
             return r->simple_symbols[get_bits1(gb)];
     } else
-        return webp_get_vlc(gb, r->vlc.table);
+        return get_vlc2(gb, r->vlc.table, 8, 2);
 }
 
-static int huff_reader_build_canonical(HuffReader *r, int *code_lengths,
+static int huff_reader_build_canonical(HuffReader *r, const uint8_t *code_lengths,
                                        int alphabet_size)
 {
     int len = 0, sym, code = 0, ret;
@@ -332,7 +302,7 @@ static int huff_reader_build_canonical(HuffReader *r, int *code_lengths,
 
     ret = init_vlc(&r->vlc, 8, alphabet_size,
                    code_lengths, sizeof(*code_lengths), sizeof(*code_lengths),
-                   codes, sizeof(*codes), sizeof(*codes), 0);
+                   codes, sizeof(*codes), sizeof(*codes), INIT_VLC_OUTPUT_LE);
     if (ret < 0) {
         av_free(codes);
         return ret;
@@ -362,13 +332,12 @@ static int read_huffman_code_normal(WebPContext *s, HuffReader *hc,
                                     int alphabet_size)
 {
     HuffReader code_len_hc = { { 0 }, 0, 0, { 0 } };
-    int *code_lengths = NULL;
-    int code_length_code_lengths[NUM_CODE_LENGTH_CODES] = { 0 };
+    uint8_t *code_lengths;
+    uint8_t code_length_code_lengths[NUM_CODE_LENGTH_CODES] = { 0 };
     int i, symbol, max_symbol, prev_code_len, ret;
     int num_codes = 4 + get_bits(&s->gb, 4);
 
-    if (num_codes > NUM_CODE_LENGTH_CODES)
-        return AVERROR_INVALIDDATA;
+    av_assert1(num_codes <= NUM_CODE_LENGTH_CODES);
 
     for (i = 0; i < num_codes; i++)
         code_length_code_lengths[code_length_code_order[i]] = get_bits(&s->gb, 3);
@@ -376,9 +345,9 @@ static int read_huffman_code_normal(WebPContext *s, HuffReader *hc,
     ret = huff_reader_build_canonical(&code_len_hc, code_length_code_lengths,
                                       NUM_CODE_LENGTH_CODES);
     if (ret < 0)
-        goto finish;
+        return ret;
 
-    code_lengths = av_mallocz_array(alphabet_size, sizeof(*code_lengths));
+    code_lengths = av_mallocz(alphabet_size);
     if (!code_lengths) {
         ret = AVERROR(ENOMEM);
         goto finish;
@@ -463,13 +432,9 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
 static int decode_entropy_image(WebPContext *s)
 {
     ImageContext *img;
-    int ret, block_bits, width, blocks_w, blocks_h, x, y, max;
+    int ret, block_bits, blocks_w, blocks_h, x, y, max;
 
-    width = s->width;
-    if (s->reduced_width > 0)
-        width = s->reduced_width;
-
-    PARSE_BLOCK_SIZE(width, s->height);
+    PARSE_BLOCK_SIZE(s->reduced_width, s->height);
 
     ret = decode_entropy_coded_image(s, IMAGE_ROLE_ENTROPY, blocks_w, blocks_h);
     if (ret < 0)
@@ -498,7 +463,7 @@ static int parse_transform_predictor(WebPContext *s)
 {
     int block_bits, blocks_w, blocks_h, ret;
 
-    PARSE_BLOCK_SIZE(s->width, s->height);
+    PARSE_BLOCK_SIZE(s->reduced_width, s->height);
 
     ret = decode_entropy_coded_image(s, IMAGE_ROLE_PREDICTOR, blocks_w,
                                      blocks_h);
@@ -514,7 +479,7 @@ static int parse_transform_color(WebPContext *s)
 {
     int block_bits, blocks_w, blocks_h, ret;
 
-    PARSE_BLOCK_SIZE(s->width, s->height);
+    PARSE_BLOCK_SIZE(s->reduced_width, s->height);
 
     ret = decode_entropy_coded_image(s, IMAGE_ROLE_COLOR_TRANSFORM, blocks_w,
                                      blocks_h);
@@ -605,8 +570,7 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
     img->frame->height = h;
 
     if (role == IMAGE_ROLE_ARGB && !img->is_alpha_primary) {
-        ThreadFrame pt = { .f = img->frame };
-        ret = ff_thread_get_buffer(s->avctx, &pt, 0);
+        ret = ff_thread_get_buffer(s->avctx, img->frame, 0);
     } else
         ret = av_frame_get_buffer(img->frame, 1);
     if (ret < 0)
@@ -619,8 +583,8 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
                    img->color_cache_bits);
             return AVERROR_INVALIDDATA;
         }
-        img->color_cache = av_mallocz_array(1 << img->color_cache_bits,
-                                            sizeof(*img->color_cache));
+        img->color_cache = av_calloc(1 << img->color_cache_bits,
+                                     sizeof(*img->color_cache));
         if (!img->color_cache)
             return AVERROR(ENOMEM);
     } else {
@@ -634,9 +598,9 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
             return ret;
         img->nb_huffman_groups = s->nb_huffman_groups;
     }
-    img->huffman_groups = av_mallocz_array(img->nb_huffman_groups *
-                                           HUFFMAN_CODES_PER_META_CODE,
-                                           sizeof(*img->huffman_groups));
+    img->huffman_groups = av_calloc(img->nb_huffman_groups,
+                                    HUFFMAN_CODES_PER_META_CODE *
+                                    sizeof(*img->huffman_groups));
     if (!img->huffman_groups)
         return AVERROR(ENOMEM);
 
@@ -658,12 +622,15 @@ static int decode_entropy_coded_image(WebPContext *s, enum ImageRole role,
     }
 
     width = img->frame->width;
-    if (role == IMAGE_ROLE_ARGB && s->reduced_width > 0)
+    if (role == IMAGE_ROLE_ARGB)
         width = s->reduced_width;
 
     x = 0; y = 0;
     while (y < img->frame->height) {
         int v;
+
+        if (get_bits_left(&s->gb) < 0)
+            return AVERROR_INVALIDDATA;
 
         hg = get_huffman_group(s, img, x, y);
         v = huff_reader_get_symbol(&hg[HUFF_IDX_GREEN], &s->gb);
@@ -960,7 +927,7 @@ static int apply_predictor_transform(WebPContext *s)
     int x, y;
 
     for (y = 0; y < img->frame->height; y++) {
-        for (x = 0; x < img->frame->width; x++) {
+        for (x = 0; x < s->reduced_width; x++) {
             int tx = x >> pimg->size_reduction;
             int ty = y >> pimg->size_reduction;
             enum PredictionMode m = GET_PIXEL_COMP(pimg->frame, tx, ty, 2);
@@ -1000,7 +967,7 @@ static int apply_color_transform(WebPContext *s)
     cimg = &s->image[IMAGE_ROLE_COLOR_TRANSFORM];
 
     for (y = 0; y < img->frame->height; y++) {
-        for (x = 0; x < img->frame->width; x++) {
+        for (x = 0; x < s->reduced_width; x++) {
             cx = x >> cimg->size_reduction;
             cy = y >> cimg->size_reduction;
             cp = GET_PIXEL(cimg->frame, cx, cy);
@@ -1020,7 +987,7 @@ static int apply_subtract_green_transform(WebPContext *s)
     ImageContext *img = &s->image[IMAGE_ROLE_ARGB];
 
     for (y = 0; y < img->frame->height; y++) {
-        for (x = 0; x < img->frame->width; x++) {
+        for (x = 0; x < s->reduced_width; x++) {
             uint8_t *p = GET_PIXEL(img->frame, x, y);
             p[1] += p[2];
             p[3] += p[2];
@@ -1039,7 +1006,7 @@ static int apply_color_indexing_transform(WebPContext *s)
     img = &s->image[IMAGE_ROLE_ARGB];
     pal = &s->image[IMAGE_ROLE_COLOR_INDEXING];
 
-    if (pal->size_reduction > 0) {
+    if (pal->size_reduction > 0) { // undo pixel packing
         GetBitContext gb_g;
         uint8_t *line;
         int pixel_bits = 8 >> pal->size_reduction;
@@ -1065,6 +1032,7 @@ static int apply_color_indexing_transform(WebPContext *s)
             }
         }
         av_free(line);
+        s->reduced_width = s->width; // we are back to full size
     }
 
     // switch to local palette if it's worth initializing it
@@ -1116,7 +1084,7 @@ static void update_canvas_size(AVCodecContext *avctx, int w, int h)
 }
 
 static int vp8_lossless_decode_frame(AVCodecContext *avctx, AVFrame *p,
-                                     int *got_frame, uint8_t *data_start,
+                                     int *got_frame, const uint8_t *data_start,
                                      unsigned int data_size, int is_alpha_chunk)
 {
     WebPContext *s = avctx->priv_data;
@@ -1161,7 +1129,7 @@ static int vp8_lossless_decode_frame(AVCodecContext *avctx, AVFrame *p,
 
     /* parse transformations */
     s->nb_transforms = 0;
-    s->reduced_width = 0;
+    s->reduced_width = s->width;
     used = 0;
     while (get_bits1(&s->gb)) {
         enum TransformType transform = get_bits(&s->gb, 2);
@@ -1272,7 +1240,7 @@ static void alpha_inverse_prediction(AVFrame *frame, enum AlphaFilter m)
 }
 
 static int vp8_lossy_decode_alpha(AVCodecContext *avctx, AVFrame *p,
-                                  uint8_t *data_start,
+                                  const uint8_t *data_start,
                                   unsigned int data_size)
 {
     WebPContext *s = avctx->priv_data;
@@ -1329,7 +1297,6 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
                                   unsigned int data_size)
 {
     WebPContext *s = avctx->priv_data;
-    AVPacket pkt;
     int ret;
 
     if (!s->initialized) {
@@ -1345,11 +1312,11 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
         return AVERROR_PATCHWELCOME;
     }
 
-    av_init_packet(&pkt);
-    pkt.data = data_start;
-    pkt.size = data_size;
+    av_packet_unref(s->pkt);
+    s->pkt->data = data_start;
+    s->pkt->size = data_size;
 
-    ret = ff_vp8_decode_frame(avctx, p, got_frame, &pkt);
+    ret = ff_vp8_decode_frame(avctx, p, got_frame, s->pkt);
     if (ret < 0)
         return ret;
 
@@ -1367,10 +1334,9 @@ static int vp8_lossy_decode_frame(AVCodecContext *avctx, AVFrame *p,
     return ret;
 }
 
-static int webp_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
-                             AVPacket *avpkt)
+static int webp_decode_frame(AVCodecContext *avctx, AVFrame *p,
+                             int *got_frame, AVPacket *avpkt)
 {
-    AVFrame * const p = data;
     WebPContext *s = avctx->priv_data;
     GetByteContext gb;
     int ret;
@@ -1412,8 +1378,11 @@ static int webp_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
             return AVERROR_INVALIDDATA;
         chunk_size += chunk_size & 1;
 
-        if (bytestream2_get_bytes_left(&gb) < chunk_size)
-            return AVERROR_INVALIDDATA;
+        if (bytestream2_get_bytes_left(&gb) < chunk_size) {
+           /* we seem to be running out of data, but it could also be that the
+              bitstream has trailing junk leading to bogus chunk_size. */
+            break;
+        }
 
         switch (chunk_type) {
         case MKTAG('V', 'P', '8', ' '):
@@ -1510,7 +1479,7 @@ static int webp_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
                 goto exif_end;
             }
 
-            av_dict_copy(&((AVFrame *) data)->metadata, exif_metadata, 0);
+            av_dict_copy(&p->metadata, exif_metadata, 0);
 
 exif_end:
             av_dict_free(&exif_metadata);
@@ -1563,9 +1532,22 @@ exif_end:
     return avpkt->size;
 }
 
+static av_cold int webp_decode_init(AVCodecContext *avctx)
+{
+    WebPContext *s = avctx->priv_data;
+
+    s->pkt = av_packet_alloc();
+    if (!s->pkt)
+        return AVERROR(ENOMEM);
+
+    return 0;
+}
+
 static av_cold int webp_decode_close(AVCodecContext *avctx)
 {
     WebPContext *s = avctx->priv_data;
+
+    av_packet_free(&s->pkt);
 
     if (s->initialized)
         return ff_vp8_decode_free(avctx);
@@ -1573,13 +1555,15 @@ static av_cold int webp_decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_webp_decoder = {
-    .name           = "webp",
-    .long_name      = NULL_IF_CONFIG_SMALL("WebP image"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_WEBP,
+const FFCodec ff_webp_decoder = {
+    .p.name         = "webp",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("WebP image"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_WEBP,
     .priv_data_size = sizeof(WebPContext),
-    .decode         = webp_decode_frame,
+    .init           = webp_decode_init,
+    FF_CODEC_DECODE_CB(webp_decode_frame),
     .close          = webp_decode_close,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

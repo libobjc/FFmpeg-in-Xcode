@@ -19,8 +19,10 @@
  */
 
 #include "../swscale_internal.h"
+#include "libavutil/attributes.h"
 #include "libavutil/x86/asm.h"
 #include "libavutil/x86/cpu.h"
+#include "libavutil/mem_internal.h"
 
 #define RET 0xC3 // near return opcode for x86
 #define PREFETCH "prefetchnta"

@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/pixfmt.h"
 #include "libavutil/opt.h"
 #include "avfilter.h"
@@ -75,6 +77,7 @@ static const AVOption setparams_options[] = {
     {"smpte431",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE431},     INT_MIN, INT_MAX, FLAGS, "color_primaries"},
     {"smpte432",                        NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_SMPTE432},     INT_MIN, INT_MAX, FLAGS, "color_primaries"},
     {"jedec-p22",                       NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_JEDEC_P22},    INT_MIN, INT_MAX, FLAGS, "color_primaries"},
+    {"ebu3213",                         NULL,  0, AV_OPT_TYPE_CONST, {.i64=AVCOL_PRI_EBU3213},      INT_MIN, INT_MAX, FLAGS, "color_primaries"},
 
     {"color_trc", "select color transfer", OFFSET(color_trc), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_TRC_NB-1, FLAGS, "color_trc"},
     {"auto", "keep the same color transfer",  0, AV_OPT_TYPE_CONST, {.i64=-1},                     INT_MIN, INT_MAX, FLAGS, "color_trc"},
@@ -150,7 +153,6 @@ static const AVFilterPad inputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad outputs[] = {
@@ -158,16 +160,16 @@ static const AVFilterPad outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_setparams = {
+const AVFilter ff_vf_setparams = {
     .name        = "setparams",
     .description = NULL_IF_CONFIG_SMALL("Force field, or color property for the output video frame."),
     .priv_size   = sizeof(SetParamsContext),
     .priv_class  = &setparams_class,
-    .inputs      = inputs,
-    .outputs     = outputs,
+    .flags       = AVFILTER_FLAG_METADATA_ONLY,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
 };
 
 #if CONFIG_SETRANGE_FILTER
@@ -199,14 +201,15 @@ static av_cold int init_setrange(AVFilterContext *ctx)
     return 0;
 }
 
-AVFilter ff_vf_setrange = {
+const AVFilter ff_vf_setrange = {
     .name        = "setrange",
     .description = NULL_IF_CONFIG_SMALL("Force color range for the output video frame."),
     .priv_size   = sizeof(SetParamsContext),
     .init        = init_setrange,
     .priv_class  = &setrange_class,
-    .inputs      = inputs,
-    .outputs     = outputs,
+    .flags       = AVFILTER_FLAG_METADATA_ONLY,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
 };
 #endif /* CONFIG_SETRANGE_FILTER */
 
@@ -233,13 +236,14 @@ static av_cold int init_setfield(AVFilterContext *ctx)
     return 0;
 }
 
-AVFilter ff_vf_setfield = {
+const AVFilter ff_vf_setfield = {
     .name        = "setfield",
     .description = NULL_IF_CONFIG_SMALL("Force field for the output video frame."),
     .priv_size   = sizeof(SetParamsContext),
     .init        = init_setfield,
     .priv_class  = &setfield_class,
-    .inputs      = inputs,
-    .outputs     = outputs,
+    .flags       = AVFILTER_FLAG_METADATA_ONLY,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
 };
 #endif /* CONFIG_SETFIELD_FILTER */

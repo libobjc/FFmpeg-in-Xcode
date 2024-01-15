@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/mem.h"
-
 #include "bytestream.h"
 #include "snappy.h"
 
@@ -39,6 +37,8 @@ static int64_t bytestream2_get_levarint(GetByteContext *gb)
 
     do {
         tmp = bytestream2_get_byte(gb);
+        if (shift > 31 || ((tmp & 127LL) << shift) > INT_MAX)
+            return AVERROR_INVALIDDATA;
         val |= (tmp & 127) << shift;
         shift += 7;
     } while (tmp & 128);

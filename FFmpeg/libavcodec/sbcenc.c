@@ -30,10 +30,11 @@
  * SBC encoder implementation
  */
 
-#include <stdbool.h>
+#include "libavutil/channel_layout.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
-#include "internal.h"
+#include "codec_internal.h"
+#include "encode.h"
 #include "profiles.h"
 #include "put_bits.h"
 #include "sbc.h"
@@ -95,7 +96,7 @@ static int sbc_analyze_audio(SBCDSPContext *s, struct sbc_frame *frame)
  * Returns the length of the packed frame.
  */
 static size_t sbc_pack_frame(AVPacket *avpkt, struct sbc_frame *frame,
-                             int joint, bool msbc)
+                             int joint, int msbc)
 {
     PutBitContext pb;
 
@@ -189,7 +190,7 @@ static size_t sbc_pack_frame(AVPacket *avpkt, struct sbc_frame *frame,
 
     flush_put_bits(&pb);
 
-    return (put_bits_count(&pb) + 7) / 8;
+    return put_bytes_output(&pb);
 }
 
 static int sbc_encode_init(AVCodecContext *avctx)
@@ -201,7 +202,7 @@ static int sbc_encode_init(AVCodecContext *avctx)
         sbc->msbc = 1;
 
     if (sbc->msbc) {
-        if (avctx->channels != 1) {
+        if (avctx->ch_layout.nb_channels != 1) {
             av_log(avctx, AV_LOG_ERROR, "mSBC require mono channel.\n");
             return AVERROR(EINVAL);
         }
@@ -226,7 +227,7 @@ static int sbc_encode_init(AVCodecContext *avctx)
             return AVERROR(EINVAL);
         }
 
-        if (avctx->channels == 1) {
+        if (avctx->ch_layout.nb_channels == 1) {
             frame->mode = SBC_MODE_MONO;
             if (sbc->max_delay <= 3000 || avctx->bit_rate > 270000)
                 frame->subbands = 4;
@@ -250,7 +251,7 @@ static int sbc_encode_init(AVCodecContext *avctx)
 
         d = frame->blocks * ((frame->mode == SBC_MODE_DUAL_CHANNEL) + 1);
         frame->bitpool = (((avctx->bit_rate * frame->subbands * frame->blocks) / avctx->sample_rate)
-                          - 4 * frame->subbands * avctx->channels
+                          - 4 * frame->subbands * avctx->ch_layout.nb_channels
                           - (frame->mode == SBC_MODE_JOINT_STEREO)*frame->subbands - 32 + d/2) / d;
         if (avctx->global_quality > 0)
             frame->bitpool = avctx->global_quality / FF_QP2LAMBDA;
@@ -262,8 +263,8 @@ static int sbc_encode_init(AVCodecContext *avctx)
         if (avctx->sample_rate == avctx->codec->supported_samplerates[i])
             frame->frequency = i;
 
-    frame->channels = avctx->channels;
-    frame->codesize = frame->subbands * frame->blocks * avctx->channels * 2;
+    frame->channels = avctx->ch_layout.nb_channels;
+    frame->codesize = frame->subbands * frame->blocks * avctx->ch_layout.nb_channels * 2;
     frame->crc_ctx = av_crc_get_table(AV_CRC_8_EBU);
 
     memset(&sbc->dsp.X, 0, sizeof(sbc->dsp.X));
@@ -291,7 +292,7 @@ static int sbc_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     if (av_frame->nb_samples * frame->channels * 2 < frame->codesize)
         return 0;
 
-    if ((ret = ff_alloc_packet2(avctx, avpkt, frame_length, 0)) < 0)
+    if ((ret = ff_get_encode_buffer(avctx, avpkt, frame_length, 0)) < 0)
         return ret;
 
     /* Select the needed input data processing function and call it */
@@ -331,6 +332,7 @@ static const AVOption options[] = {
       OFFSET(max_delay), AV_OPT_TYPE_DURATION, {.i64 = 13000}, 1000,13000, AE },
     { "msbc",      "use mSBC mode (wideband speech mono SBC)",
       OFFSET(msbc),      AV_OPT_TYPE_BOOL,     {.i64 = 0},        0,    1, AE },
+    FF_AVCTX_PROFILE_OPTION("msbc", NULL, AUDIO, FF_PROFILE_SBC_MSBC)
     { NULL },
 };
 
@@ -341,21 +343,26 @@ static const AVClass sbc_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_sbc_encoder = {
-    .name                  = "sbc",
-    .long_name             = NULL_IF_CONFIG_SMALL("SBC (low-complexity subband codec)"),
-    .type                  = AVMEDIA_TYPE_AUDIO,
-    .id                    = AV_CODEC_ID_SBC,
+const FFCodec ff_sbc_encoder = {
+    .p.name                = "sbc",
+    .p.long_name           = NULL_IF_CONFIG_SMALL("SBC (low-complexity subband codec)"),
+    .p.type                = AVMEDIA_TYPE_AUDIO,
+    .p.id                  = AV_CODEC_ID_SBC,
+    .p.capabilities        = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SMALL_LAST_FRAME,
     .priv_data_size        = sizeof(SBCEncContext),
     .init                  = sbc_encode_init,
-    .encode2               = sbc_encode_frame,
-    .capabilities          = AV_CODEC_CAP_SMALL_LAST_FRAME,
+    FF_CODEC_ENCODE_CB(sbc_encode_frame),
     .caps_internal         = FF_CODEC_CAP_INIT_THREADSAFE,
-    .channel_layouts       = (const uint64_t[]) { AV_CH_LAYOUT_MONO,
+#if FF_API_OLD_CHANNEL_LAYOUT
+    .p.channel_layouts     = (const uint64_t[]) { AV_CH_LAYOUT_MONO,
                                                   AV_CH_LAYOUT_STEREO, 0},
-    .sample_fmts           = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16,
+#endif
+    .p.ch_layouts          = (const AVChannelLayout[]) { AV_CHANNEL_LAYOUT_MONO,
+                                                         AV_CHANNEL_LAYOUT_STEREO,
+                                                         { 0 } },
+    .p.sample_fmts         = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_S16,
                                                              AV_SAMPLE_FMT_NONE },
-    .supported_samplerates = (const int[]) { 16000, 32000, 44100, 48000, 0 },
-    .priv_class            = &sbc_class,
-    .profiles              = NULL_IF_CONFIG_SMALL(ff_sbc_profiles),
+    .p.supported_samplerates = (const int[]) { 16000, 32000, 44100, 48000, 0 },
+    .p.priv_class          = &sbc_class,
+    .p.profiles            = NULL_IF_CONFIG_SMALL(ff_sbc_profiles),
 };

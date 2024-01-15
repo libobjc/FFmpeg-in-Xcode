@@ -20,10 +20,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "hwaccel.h"
+#include "hwconfig.h"
 #include "mpegutils.h"
 #include "mpegvideo.h"
-#include "internal.h"
+#include "mpegvideodec.h"
 #include "vaapi_decode.h"
 
 /** Reconstruct bitstream f_code */

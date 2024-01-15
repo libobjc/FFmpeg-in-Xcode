@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include "libavutil/avstring.h"
 #include "libavutil/internal.h"
 #include "libavutil/opt.h"
@@ -152,11 +154,7 @@ static int file_check(URLContext *h, int mask)
             ret |= AVIO_FLAG_WRITE;
 #else
     struct stat st;
-#   ifndef _WIN32
     ret = stat(filename, &st);
-#   else
-    ret = win32_stat(filename, &st);
-#   endif
     if (ret < 0)
         return AVERROR(errno);
 
@@ -166,6 +164,8 @@ static int file_check(URLContext *h, int mask)
     }
     return ret;
 }
+
+#if CONFIG_FILE_PROTOCOL
 
 static int file_delete(URLContext *h)
 {
@@ -202,8 +202,6 @@ static int file_move(URLContext *h_src, URLContext *h_dst)
 
     return 0;
 }
-
-#if CONFIG_FILE_PROTOCOL
 
 static int file_open(URLContext *h, const char *filename, int flags)
 {
@@ -266,7 +264,8 @@ static int64_t file_seek(URLContext *h, int64_t pos, int whence)
 static int file_close(URLContext *h)
 {
     FileContext *c = h->priv_data;
-    return close(c->fd);
+    int ret = close(c->fd);
+    return (ret == -1) ? AVERROR(errno) : 0;
 }
 
 static int file_open_dir(URLContext *h)
@@ -369,7 +368,7 @@ const URLProtocol ff_file_protocol = {
     .url_open_dir        = file_open_dir,
     .url_read_dir        = file_read_dir,
     .url_close_dir       = file_close_dir,
-    .default_whitelist   = "file,crypto"
+    .default_whitelist   = "file,crypto,data"
 };
 
 #endif /* CONFIG_FILE_PROTOCOL */
@@ -408,7 +407,7 @@ const URLProtocol ff_pipe_protocol = {
     .url_check           = file_check,
     .priv_data_size      = sizeof(FileContext),
     .priv_data_class     = &pipe_class,
-    .default_whitelist   = "crypto"
+    .default_whitelist   = "crypto,data"
 };
 
 #endif /* CONFIG_PIPE_PROTOCOL */

@@ -21,6 +21,12 @@
 
 #include "avcodec.h"
 
+extern const AVHWAccel ff_av1_d3d11va_hwaccel;
+extern const AVHWAccel ff_av1_d3d11va2_hwaccel;
+extern const AVHWAccel ff_av1_dxva2_hwaccel;
+extern const AVHWAccel ff_av1_nvdec_hwaccel;
+extern const AVHWAccel ff_av1_vaapi_hwaccel;
+extern const AVHWAccel ff_av1_vdpau_hwaccel;
 extern const AVHWAccel ff_h263_vaapi_hwaccel;
 extern const AVHWAccel ff_h263_videotoolbox_hwaccel;
 extern const AVHWAccel ff_h264_d3d11va_hwaccel;
@@ -42,7 +48,6 @@ extern const AVHWAccel ff_mjpeg_vaapi_hwaccel;
 extern const AVHWAccel ff_mpeg1_nvdec_hwaccel;
 extern const AVHWAccel ff_mpeg1_vdpau_hwaccel;
 extern const AVHWAccel ff_mpeg1_videotoolbox_hwaccel;
-extern const AVHWAccel ff_mpeg1_xvmc_hwaccel;
 extern const AVHWAccel ff_mpeg2_d3d11va_hwaccel;
 extern const AVHWAccel ff_mpeg2_d3d11va2_hwaccel;
 extern const AVHWAccel ff_mpeg2_nvdec_hwaccel;
@@ -50,11 +55,11 @@ extern const AVHWAccel ff_mpeg2_dxva2_hwaccel;
 extern const AVHWAccel ff_mpeg2_vaapi_hwaccel;
 extern const AVHWAccel ff_mpeg2_vdpau_hwaccel;
 extern const AVHWAccel ff_mpeg2_videotoolbox_hwaccel;
-extern const AVHWAccel ff_mpeg2_xvmc_hwaccel;
 extern const AVHWAccel ff_mpeg4_nvdec_hwaccel;
 extern const AVHWAccel ff_mpeg4_vaapi_hwaccel;
 extern const AVHWAccel ff_mpeg4_vdpau_hwaccel;
 extern const AVHWAccel ff_mpeg4_videotoolbox_hwaccel;
+extern const AVHWAccel ff_prores_videotoolbox_hwaccel;
 extern const AVHWAccel ff_vc1_d3d11va_hwaccel;
 extern const AVHWAccel ff_vc1_d3d11va2_hwaccel;
 extern const AVHWAccel ff_vc1_dxva2_hwaccel;
@@ -68,6 +73,8 @@ extern const AVHWAccel ff_vp9_d3d11va2_hwaccel;
 extern const AVHWAccel ff_vp9_dxva2_hwaccel;
 extern const AVHWAccel ff_vp9_nvdec_hwaccel;
 extern const AVHWAccel ff_vp9_vaapi_hwaccel;
+extern const AVHWAccel ff_vp9_vdpau_hwaccel;
+extern const AVHWAccel ff_vp9_videotoolbox_hwaccel;
 extern const AVHWAccel ff_wmv3_d3d11va_hwaccel;
 extern const AVHWAccel ff_wmv3_d3d11va2_hwaccel;
 extern const AVHWAccel ff_wmv3_dxva2_hwaccel;

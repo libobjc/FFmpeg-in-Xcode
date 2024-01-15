@@ -20,6 +20,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "internal.h"
 #include "spdif.h"
 
 #define MARKER_16LE         0x72F81F4E
@@ -31,7 +32,7 @@
 #define IS_24LE_MARKER(state)   ((state & 0xFFFFFFFFFFFF) == MARKER_24LE)
 #define IS_LE_MARKER(state)     (IS_16LE_MARKER(state) || IS_20LE_MARKER(state) || IS_24LE_MARKER(state))
 
-static int s337m_get_offset_and_codec(AVFormatContext *s,
+static int s337m_get_offset_and_codec(void *avc,
                                       uint64_t state,
                                       int data_type, int data_size,
                                       int *offset, enum AVCodecID *codec)
@@ -50,8 +51,8 @@ static int s337m_get_offset_and_codec(AVFormatContext *s,
     }
 
     if ((data_type & 0x1F) != 0x1C) {
-        if (s)
-            avpriv_report_missing_feature(s, "Data type %#x in SMPTE 337M", data_type & 0x1F);
+        if (avc)
+            avpriv_report_missing_feature(avc, "Data type %#x in SMPTE 337M", data_type & 0x1F);
         return AVERROR_PATCHWELCOME;
     }
 
@@ -72,8 +73,8 @@ static int s337m_get_offset_and_codec(AVFormatContext *s,
         *offset = 1601;
         break;
     default:
-        if (s)
-            avpriv_report_missing_feature(s, "Dolby E data size %d in SMPTE 337M", data_size);
+        if (avc)
+            avpriv_report_missing_feature(avc, "Dolby E data size %d in SMPTE 337M", data_size);
         return AVERROR_PATCHWELCOME;
     }
 
@@ -147,7 +148,6 @@ static int s337m_read_packet(AVFormatContext *s, AVPacket *pkt)
     uint64_t state = 0;
     int ret, data_type, data_size, offset;
     enum AVCodecID codec;
-    int64_t pos;
 
     while (!IS_LE_MARKER(state)) {
         state = (state << 8) | avio_r8(pb);
@@ -163,20 +163,11 @@ static int s337m_read_packet(AVFormatContext *s, AVPacket *pkt)
         data_size = avio_rl24(pb);
     }
 
-    pos = avio_tell(pb);
-
     if ((ret = s337m_get_offset_and_codec(s, state, data_type, data_size, &offset, &codec)) < 0)
         return ret;
 
-    if ((ret = av_new_packet(pkt, offset)) < 0)
-        return ret;
-
-    pkt->pos = pos;
-
-    if (avio_read(pb, pkt->data, pkt->size) < pkt->size) {
-        av_packet_unref(pkt);
-        return AVERROR_EOF;
-    }
+    if ((ret = av_get_packet(pb, pkt, offset)) != offset)
+        return ret < 0 ? ret : AVERROR_EOF;
 
     if (IS_16LE_MARKER(state))
         ff_spdif_bswap_buf16((uint16_t *)pkt->data, (uint16_t *)pkt->data, pkt->size >> 1);
@@ -186,17 +177,17 @@ static int s337m_read_packet(AVFormatContext *s, AVPacket *pkt)
     if (!s->nb_streams) {
         AVStream *st = avformat_new_stream(s, NULL);
         if (!st) {
-            av_packet_unref(pkt);
             return AVERROR(ENOMEM);
         }
         st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
         st->codecpar->codec_id   = codec;
+        ffstream(st)->need_parsing = AVSTREAM_PARSE_HEADERS;
     }
 
     return 0;
 }
 
-AVInputFormat ff_s337m_demuxer = {
+const AVInputFormat ff_s337m_demuxer = {
     .name           = "s337m",
     .long_name      = NULL_IF_CONFIG_SMALL("SMPTE 337M"),
     .read_probe     = s337m_probe,

@@ -20,14 +20,13 @@
  */
 
 #include "config.h"
-#include <float.h>
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
 #include "avformat.h"
-#include "avio_internal.h"
 #include "internal.h"
+#include "mux.h"
 #include "os_support.h"
 
 #include "libavutil/avstring.h"
@@ -93,19 +92,17 @@ static int parse_header(OutputStream *os, const uint8_t *buf, int buf_size)
             if (os->nb_extra_packets >= FF_ARRAY_ELEMS(os->extra_packets))
                 return AVERROR_INVALIDDATA;
             os->extra_packet_sizes[os->nb_extra_packets] = size;
-            os->extra_packets[os->nb_extra_packets] = av_malloc(size);
+            os->extra_packets[os->nb_extra_packets] = av_memdup(buf, size);
             if (!os->extra_packets[os->nb_extra_packets])
                 return AVERROR(ENOMEM);
-            memcpy(os->extra_packets[os->nb_extra_packets], buf, size);
             os->nb_extra_packets++;
         } else if (type == 0x12) {
             if (os->metadata)
                 return AVERROR_INVALIDDATA;
             os->metadata_size = size - 11 - 4;
-            os->metadata      = av_malloc(os->metadata_size);
+            os->metadata      = av_memdup(buf + 11, os->metadata_size);
             if (!os->metadata)
                 return AVERROR(ENOMEM);
-            memcpy(os->metadata, buf + 11, os->metadata_size);
         }
         buf      += size;
         buf_size -= size;
@@ -146,8 +143,7 @@ static void hds_free(AVFormatContext *s)
             av_write_trailer(os->ctx);
         if (os->ctx)
             avio_context_free(&os->ctx->pb);
-        if (os->ctx)
-            avformat_free_context(os->ctx);
+        avformat_free_context(os->ctx);
         av_freep(&os->metadata);
         for (j = 0; j < os->nb_extra_packets; j++)
             av_freep(&os->extra_packets[j]);
@@ -314,25 +310,22 @@ static void close_file(AVFormatContext *s, OutputStream *os)
 static int hds_write_header(AVFormatContext *s)
 {
     HDSContext *c = s->priv_data;
+    const AVOutputFormat *oformat;
     int ret = 0, i;
-    ff_const59 AVOutputFormat *oformat;
 
     if (mkdir(s->url, 0777) == -1 && errno != EEXIST) {
-        ret = AVERROR(errno);
         av_log(s, AV_LOG_ERROR , "Failed to create directory %s\n", s->url);
-        goto fail;
+        return AVERROR(errno);
     }
 
     oformat = av_guess_format("flv", NULL, NULL);
     if (!oformat) {
-        ret = AVERROR_MUXER_NOT_FOUND;
-        goto fail;
+        return AVERROR_MUXER_NOT_FOUND;
     }
 
-    c->streams = av_mallocz_array(s->nb_streams, sizeof(*c->streams));
+    c->streams = av_calloc(s->nb_streams, sizeof(*c->streams));
     if (!c->streams) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
+        return AVERROR(ENOMEM);
     }
 
     for (i = 0; i < s->nb_streams; i++) {
@@ -342,8 +335,7 @@ static int hds_write_header(AVFormatContext *s)
 
         if (!st->codecpar->bit_rate) {
             av_log(s, AV_LOG_ERROR, "No bit rate set for stream %d\n", i);
-            ret = AVERROR(EINVAL);
-            goto fail;
+            return AVERROR(EINVAL);
         }
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             if (os->has_video) {
@@ -359,8 +351,7 @@ static int hds_write_header(AVFormatContext *s)
             os->has_audio = 1;
         } else {
             av_log(s, AV_LOG_ERROR, "Unsupported stream type in stream %d\n", i);
-            ret = AVERROR(EINVAL);
-            goto fail;
+            return AVERROR(EINVAL);
         }
         os->bitrate += s->streams[i]->codecpar->bit_rate;
 
@@ -368,8 +359,7 @@ static int hds_write_header(AVFormatContext *s)
             os->first_stream = i;
             ctx = avformat_alloc_context();
             if (!ctx) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
+                return AVERROR(ENOMEM);
             }
             os->ctx = ctx;
             ctx->oformat = oformat;
@@ -377,11 +367,10 @@ static int hds_write_header(AVFormatContext *s)
             ctx->flags = s->flags;
 
             ctx->pb = avio_alloc_context(os->iobuf, sizeof(os->iobuf),
-                                         AVIO_FLAG_WRITE, os,
+                                         1, os,
                                          NULL, hds_write, NULL);
             if (!ctx->pb) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
+                return AVERROR(ENOMEM);
             }
         } else {
             ctx = os->ctx;
@@ -389,8 +378,7 @@ static int hds_write_header(AVFormatContext *s)
         s->streams[i]->id = c->nb_streams;
 
         if (!(st = avformat_new_stream(ctx, NULL))) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
+            return AVERROR(ENOMEM);
         }
         avcodec_parameters_copy(st->codecpar, s->streams[i]->codecpar);
         st->codecpar->codec_tag = 0;
@@ -404,7 +392,7 @@ static int hds_write_header(AVFormatContext *s)
         OutputStream *os = &c->streams[i];
         int j;
         if ((ret = avformat_write_header(os->ctx, NULL)) < 0) {
-             goto fail;
+             return ret;
         }
         os->ctx_inited = 1;
         avio_flush(os->ctx->pb);
@@ -415,7 +403,7 @@ static int hds_write_header(AVFormatContext *s)
                  "%s/stream%d_temp", s->url, i);
         ret = init_file(s, os, 0);
         if (ret < 0)
-            goto fail;
+            return ret;
 
         if (!os->has_video && c->min_frag_duration <= 0) {
             av_log(s, AV_LOG_WARNING,
@@ -426,9 +414,6 @@ static int hds_write_header(AVFormatContext *s)
     }
     ret = write_manifest(s, 0);
 
-fail:
-    if (ret)
-        hds_free(s);
     return ret;
 }
 
@@ -512,15 +497,16 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
     HDSContext *c = s->priv_data;
     AVStream *st = s->streams[pkt->stream_index];
+    FFStream *const sti = ffstream(st);
     OutputStream *os = &c->streams[s->streams[pkt->stream_index]->id];
     int64_t end_dts = os->fragment_index * (int64_t)c->min_frag_duration;
     int ret;
 
-    if (st->first_dts == AV_NOPTS_VALUE)
-        st->first_dts = pkt->dts;
+    if (sti->first_dts == AV_NOPTS_VALUE)
+        sti->first_dts = pkt->dts;
 
     if ((!os->has_video || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) &&
-        av_compare_ts(pkt->dts - st->first_dts, st->time_base,
+        av_compare_ts(pkt->dts - sti->first_dts, st->time_base,
                       end_dts, AV_TIME_BASE_Q) >= 0 &&
         pkt->flags & AV_PKT_FLAG_KEY && os->packets_written) {
 
@@ -558,7 +544,6 @@ static int hds_write_trailer(AVFormatContext *s)
         rmdir(s->url);
     }
 
-    hds_free(s);
     return 0;
 }
 
@@ -579,7 +564,7 @@ static const AVClass hds_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVOutputFormat ff_hds_muxer = {
+const AVOutputFormat ff_hds_muxer = {
     .name           = "hds",
     .long_name      = NULL_IF_CONFIG_SMALL("HDS Muxer"),
     .priv_data_size = sizeof(HDSContext),
@@ -589,5 +574,6 @@ AVOutputFormat ff_hds_muxer = {
     .write_header   = hds_write_header,
     .write_packet   = hds_write_packet,
     .write_trailer  = hds_write_trailer,
+    .deinit         = hds_free,
     .priv_class     = &hds_class,
 };

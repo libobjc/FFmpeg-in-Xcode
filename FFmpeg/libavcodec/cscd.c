@@ -22,6 +22,7 @@
 #include <stdlib.h>
 
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "internal.h"
 #include "libavutil/common.h"
 
@@ -64,27 +65,30 @@ static void add_frame_default(AVFrame *f, const uint8_t *src,
     }
 }
 
-static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
-                        AVPacket *avpkt)
+static int decode_frame(AVCodecContext *avctx, AVFrame *rframe,
+                        int *got_frame, AVPacket *avpkt)
 {
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     CamStudioContext *c = avctx->priv_data;
     int ret;
+    int bpp = avctx->bits_per_coded_sample / 8;
+    int bugdelta = FFALIGN(avctx->width * bpp, 4)       * avctx->height
+                 -        (avctx->width     & ~3) * bpp * avctx->height;
 
     if (buf_size < 2) {
         av_log(avctx, AV_LOG_ERROR, "coded frame too small\n");
         return AVERROR_INVALIDDATA;
     }
 
-    if ((ret = ff_reget_buffer(avctx, c->pic)) < 0)
+    if ((ret = ff_reget_buffer(avctx, c->pic, 0)) < 0)
         return ret;
 
     // decompress data
     switch ((buf[0] >> 1) & 7) {
     case 0: { // lzo compression
         int outlen = c->decomp_size, inlen = buf_size - 2;
-        if (av_lzo1x_decode(c->decomp_buf, &outlen, &buf[2], &inlen) || outlen) {
+        if (av_lzo1x_decode(c->decomp_buf, &outlen, &buf[2], &inlen) || (outlen && outlen != bugdelta)) {
             av_log(avctx, AV_LOG_ERROR, "error during lzo decompression\n");
             return AVERROR_INVALIDDATA;
         }
@@ -93,7 +97,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     case 1: { // zlib compression
 #if CONFIG_ZLIB
         unsigned long dlen = c->decomp_size;
-        if (uncompress(c->decomp_buf, &dlen, &buf[2], buf_size - 2) != Z_OK) {
+        if (uncompress(c->decomp_buf, &dlen, &buf[2], buf_size - 2) != Z_OK || (dlen != c->decomp_size && dlen != c->decomp_size - bugdelta)) {
             av_log(avctx, AV_LOG_ERROR, "error during zlib decompression\n");
             return AVERROR_INVALIDDATA;
         }
@@ -122,7 +126,7 @@ static int decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
     }
 
     *got_frame = 1;
-    if ((ret = av_frame_ref(data, c->pic)) < 0)
+    if ((ret = av_frame_ref(rframe, c->pic)) < 0)
         return ret;
 
     return buf_size;
@@ -166,15 +170,15 @@ static av_cold int decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_cscd_decoder = {
-    .name           = "camstudio",
-    .long_name      = NULL_IF_CONFIG_SMALL("CamStudio"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_CSCD,
+const FFCodec ff_cscd_decoder = {
+    .p.name         = "camstudio",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("CamStudio"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_CSCD,
     .priv_data_size = sizeof(CamStudioContext),
     .init           = decode_init,
     .close          = decode_end,
-    .decode         = decode_frame,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

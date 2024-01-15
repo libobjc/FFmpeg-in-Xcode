@@ -29,6 +29,7 @@
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "ivi.h"
 #include "ivi_dsp.h"
@@ -264,7 +265,7 @@ static int decode_gop_header(IVI45DecContext *ctx, AVCodecContext *avctx)
         }
 
         if (get_bits1(&ctx->gb))
-            skip_bits_long(&ctx->gb, 24); /* skip transparency fill color */
+            skip_bits(&ctx->gb, 24); /* skip transparency fill color */
     }
 
     align_get_bits(&ctx->gb);
@@ -348,7 +349,7 @@ static int decode_pic_hdr(IVI45DecContext *ctx, AVCodecContext *avctx)
     if (ctx->frame_type != FRAMETYPE_NULL) {
         ctx->frame_flags = get_bits(&ctx->gb, 8);
 
-        ctx->pic_hdr_size = (ctx->frame_flags & 1) ? get_bits_long(&ctx->gb, 24) : 0;
+        ctx->pic_hdr_size = (ctx->frame_flags & 1) ? get_bits(&ctx->gb, 24) : 0;
 
         ctx->checksum = (ctx->frame_flags & 0x10) ? get_bits(&ctx->gb, 16) : 0;
 
@@ -392,7 +393,7 @@ static int decode_band_hdr(IVI45DecContext *ctx, IVIBandDesc *band,
         return 0;
     }
 
-    band->data_size = (ctx->frame_flags & 0x80) ? get_bits_long(&ctx->gb, 24) : 0;
+    band->data_size = (ctx->frame_flags & 0x80) ? get_bits(&ctx->gb, 24) : 0;
 
     band->inherit_mv     = band_flags & 2;
     band->inherit_qdelta = band_flags & 8;
@@ -682,14 +683,15 @@ static av_cold int decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_indeo5_decoder = {
-    .name           = "indeo5",
-    .long_name      = NULL_IF_CONFIG_SMALL("Intel Indeo Video Interactive 5"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_INDEO5,
+const FFCodec ff_indeo5_decoder = {
+    .p.name         = "indeo5",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Intel Indeo Video Interactive 5"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_INDEO5,
     .priv_data_size = sizeof(IVI45DecContext),
     .init           = decode_init,
     .close          = ff_ivi_decode_close,
-    .decode         = ff_ivi_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(ff_ivi_decode_frame),
+    .p.capabilities = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

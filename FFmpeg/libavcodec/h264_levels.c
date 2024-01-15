@@ -16,7 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avcodec.h"
+#include <stddef.h>
+#include "libavutil/macros.h"
 #include "h264_levels.h"
 
 // H.264 table A-1.
@@ -73,18 +74,6 @@ static int h264_get_br_factor(int profile_idc)
     }
     // Default to the non-high profile value if not specified.
     return 1200;
-}
-
-const H264LevelDescriptor *ff_h264_get_level(int level_idc,
-                                             int constraint_set3_flag)
-{
-    int i;
-    for (i = 0; i < FF_ARRAY_ELEMS(h264_levels); i++) {
-        if (h264_levels[i].level_idc            == level_idc &&
-            h264_levels[i].constraint_set3_flag == constraint_set3_flag)
-            return &h264_levels[i];
-    }
-    return NULL;
 }
 
 const H264LevelDescriptor *ff_h264_guess_level(int profile_idc,

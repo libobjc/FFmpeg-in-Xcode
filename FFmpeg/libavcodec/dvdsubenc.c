@@ -20,6 +20,7 @@
  */
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "internal.h"
 #include "libavutil/avassert.h"
 #include "libavutil/bprint.h"
@@ -29,6 +30,7 @@
 typedef struct {
     AVClass *class;
     uint32_t global_palette[16];
+    char *palette_str;
     int even_rows_fix;
 } DVDSubtitleContext;
 
@@ -278,20 +280,6 @@ static int encode_dvd_subtitles(AVCodecContext *avctx,
             break;
         }
 
-#if FF_API_AVPICTURE
-FF_DISABLE_DEPRECATION_WARNINGS
-    for (i = 0; i < rects; i++)
-        if (!h->rects[i]->data[0]) {
-            AVSubtitleRect *rect = h->rects[i];
-            int j;
-            for (j = 0; j < 4; j++) {
-                rect->data[j] = rect->pict.data[j];
-                rect->linesize[j] = rect->pict.linesize[j];
-            }
-        }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     vrect = *h->rects[0];
 
     if (rects > 1) {
@@ -388,6 +376,12 @@ FF_ENABLE_DEPRECATION_WARNINGS
     x2 = vrect.x + vrect.w - 1;
     y2 = vrect.y + vrect.h - 1;
 
+    if (x2 > avctx->width || y2 > avctx->height) {
+        av_log(avctx, AV_LOG_ERROR, "canvas_size(%d:%d) is too small(%d:%d) for render\n",
+               avctx->width, avctx->height, x2, y2);
+        ret = AVERROR(EINVAL);;
+        goto fail;
+    }
     *q++ = 0x05;
     // x1 x2 -> 6 nibbles
     *q++ = vrect.x >> 4;
@@ -423,6 +417,29 @@ fail:
     return ret;
 }
 
+static int bprint_to_extradata(AVCodecContext *avctx, struct AVBPrint *buf)
+{
+    int ret;
+    char *str;
+
+    ret = av_bprint_finalize(buf, &str);
+    if (ret < 0)
+        return ret;
+    if (!av_bprint_is_complete(buf)) {
+        av_free(str);
+        return AVERROR(ENOMEM);
+    }
+
+    avctx->extradata = str;
+    /* Note: the string is NUL terminated (so extradata can be read as a
+     * string), but the ending character is not accounted in the size (in
+     * binary formats you are likely not supposed to mux that character). When
+     * extradata is copied, it is also padded with AV_INPUT_BUFFER_PADDING_SIZE
+     * zeros. */
+    avctx->extradata_size = buf->len;
+    return 0;
+}
+
 static int dvdsub_init(AVCodecContext *avctx)
 {
     DVDSubtitleContext *dvdc = avctx->priv_data;
@@ -436,7 +453,11 @@ static int dvdsub_init(AVCodecContext *avctx)
     int i, ret;
 
     av_assert0(sizeof(dvdc->global_palette) == sizeof(default_palette));
-    memcpy(dvdc->global_palette, default_palette, sizeof(dvdc->global_palette));
+    if (dvdc->palette_str) {
+        ff_dvdsub_parse_palette(dvdc->global_palette, dvdc->palette_str);
+    } else {
+        memcpy(dvdc->global_palette, default_palette, sizeof(dvdc->global_palette));
+    }
 
     av_bprint_init(&extradata, 0, AV_BPRINT_SIZE_AUTOMATIC);
     if (avctx->width && avctx->height)
@@ -446,7 +467,7 @@ static int dvdsub_init(AVCodecContext *avctx)
         av_bprintf(&extradata, " %06"PRIx32"%c",
                    dvdc->global_palette[i] & 0xFFFFFF, i < 15 ? ',' : '\n');
 
-    ret = avpriv_bprint_to_extradata(avctx, &extradata);
+    ret = bprint_to_extradata(avctx, &extradata);
     if (ret < 0)
         return ret;
 
@@ -467,6 +488,7 @@ static int dvdsub_encode(AVCodecContext *avctx,
 #define OFFSET(x) offsetof(DVDSubtitleContext, x)
 #define SE AV_OPT_FLAG_SUBTITLE_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
+    {"palette", "set the global palette", OFFSET(palette_str), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, SE },
     {"even_rows_fix", "Make number of rows even (workaround for some players)", OFFSET(even_rows_fix), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, SE},
     { NULL },
 };
@@ -478,13 +500,14 @@ static const AVClass dvdsubenc_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_dvdsub_encoder = {
-    .name           = "dvdsub",
-    .long_name      = NULL_IF_CONFIG_SMALL("DVD subtitles"),
-    .type           = AVMEDIA_TYPE_SUBTITLE,
-    .id             = AV_CODEC_ID_DVD_SUBTITLE,
+const FFCodec ff_dvdsub_encoder = {
+    .p.name         = "dvdsub",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("DVD subtitles"),
+    .p.type         = AVMEDIA_TYPE_SUBTITLE,
+    .p.id           = AV_CODEC_ID_DVD_SUBTITLE,
     .init           = dvdsub_init,
-    .encode_sub     = dvdsub_encode,
-    .priv_class     = &dvdsubenc_class,
+    FF_CODEC_ENCODE_SUB_CB(dvdsub_encode),
+    .p.priv_class   = &dvdsubenc_class,
     .priv_data_size = sizeof(DVDSubtitleContext),
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

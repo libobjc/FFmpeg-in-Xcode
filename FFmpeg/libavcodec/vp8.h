@@ -29,10 +29,11 @@
 #include <stdatomic.h>
 
 #include "libavutil/buffer.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/thread.h"
 
 #include "h264pred.h"
-#include "thread.h"
+#include "threadframe.h"
 #include "vp56.h"
 #include "vp8dsp.h"
 
@@ -343,8 +344,8 @@ typedef struct VP8Context {
 
 int ff_vp8_decode_init(AVCodecContext *avctx);
 
-int ff_vp8_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
-                        AVPacket *avpkt);
+int ff_vp8_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+                        int *got_frame, AVPacket *avpkt);
 
 int ff_vp8_decode_free(AVCodecContext *avctx);
 

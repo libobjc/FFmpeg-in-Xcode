@@ -206,7 +206,6 @@ static const AVFilterPad colorkey_opencl_inputs[] = {
         .filter_frame = filter_frame,
         .config_props = &ff_opencl_filter_config_input,
     },
-    { NULL }
 };
 
 static const AVFilterPad colorkey_opencl_outputs[] = {
@@ -215,14 +214,13 @@ static const AVFilterPad colorkey_opencl_outputs[] = {
         .type = AVMEDIA_TYPE_VIDEO,
         .config_props = &ff_opencl_filter_config_output,
     },
-    { NULL }
 };
 
 #define OFFSET(x) offsetof(ColorkeyOpenCLContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 
 static const AVOption colorkey_opencl_options[] = {
-    { "color", "set the colorkey key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color", "set the colorkey key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, 0, 0, FLAGS },
     { "similarity", "set the colorkey similarity value", OFFSET(similarity), AV_OPT_TYPE_FLOAT, { .dbl = 0.01 }, 0.01, 1.0, FLAGS },
     { "blend", "set the colorkey key blend value", OFFSET(blend), AV_OPT_TYPE_FLOAT, { .dbl = 0.0 }, 0.0, 1.0, FLAGS },
     { NULL }
@@ -230,15 +228,15 @@ static const AVOption colorkey_opencl_options[] = {
 
 AVFILTER_DEFINE_CLASS(colorkey_opencl);
 
-AVFilter ff_vf_colorkey_opencl = {
+const AVFilter ff_vf_colorkey_opencl = {
     .name           = "colorkey_opencl",
     .description    = NULL_IF_CONFIG_SMALL("Turns a certain color into transparency. Operates on RGB colors."),
     .priv_size      = sizeof(ColorkeyOpenCLContext),
     .priv_class     = &colorkey_opencl_class,
     .init           = &ff_opencl_filter_init,
     .uninit         = &colorkey_opencl_uninit,
-    .query_formats  = &ff_opencl_filter_query_formats,
-    .inputs         = colorkey_opencl_inputs,
-    .outputs        = colorkey_opencl_outputs,
+    FILTER_INPUTS(colorkey_opencl_inputs),
+    FILTER_OUTPUTS(colorkey_opencl_outputs),
+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_OPENCL),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE
 };

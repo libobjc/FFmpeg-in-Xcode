@@ -29,6 +29,7 @@ typedef struct VFRDETContext {
     int64_t delta;
     int64_t min_delta;
     int64_t max_delta;
+    int64_t avg_delta;
 
     uint64_t vfr;
     uint64_t cfr;
@@ -44,6 +45,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 
         if (s->delta == AV_NOPTS_VALUE) {
             s->delta = delta;
+            s->min_delta = delta;
+            s->max_delta = delta;
         }
 
         if (s->delta != delta) {
@@ -51,6 +54,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
             s->delta = delta;
             s->min_delta = FFMIN(delta, s->min_delta);
             s->max_delta = FFMAX(delta, s->max_delta);
+            s->avg_delta += delta;
         } else {
             s->cfr++;
         }
@@ -79,7 +83,7 @@ static av_cold void uninit(AVFilterContext *ctx)
 
     av_log(ctx, AV_LOG_INFO, "VFR:%f (%"PRIu64"/%"PRIu64")", s->vfr / (float)(s->vfr + s->cfr), s->vfr, s->cfr);
     if (s->vfr)
-        av_log(ctx, AV_LOG_INFO, " min: %"PRId64" max: %"PRId64")", s->min_delta, s->max_delta);
+        av_log(ctx, AV_LOG_INFO, " min: %"PRId64" max: %"PRId64" avg: %"PRId64, s->min_delta, s->max_delta, s->avg_delta / s->vfr);
     av_log(ctx, AV_LOG_INFO, "\n");
 }
 
@@ -89,7 +93,6 @@ static const AVFilterPad vfrdet_inputs[] = {
         .type         = AVMEDIA_TYPE_VIDEO,
         .filter_frame = filter_frame,
     },
-    { NULL }
 };
 
 static const AVFilterPad vfrdet_outputs[] = {
@@ -97,15 +100,15 @@ static const AVFilterPad vfrdet_outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_vfrdet = {
+const AVFilter ff_vf_vfrdet = {
     .name        = "vfrdet",
     .description = NULL_IF_CONFIG_SMALL("Variable frame rate detect filter."),
     .priv_size   = sizeof(VFRDETContext),
     .init        = init,
     .uninit      = uninit,
-    .inputs      = vfrdet_inputs,
-    .outputs     = vfrdet_outputs,
+    .flags       = AVFILTER_FLAG_METADATA_ONLY,
+    FILTER_INPUTS(vfrdet_inputs),
+    FILTER_OUTPUTS(vfrdet_outputs),
 };

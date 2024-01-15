@@ -24,8 +24,8 @@
 #include <vdpau/vdpau.h>
 
 #include "avcodec.h"
-#include "hwaccel.h"
-#include "mpeg4video.h"
+#include "hwconfig.h"
+#include "mpeg4videodec.h"
 #include "vdpau.h"
 #include "vdpau_internal.h"
 
@@ -74,8 +74,9 @@ static int vdpau_mpeg4_start_frame(AVCodecContext *avctx,
     info->alternate_vertical_scan_flag      = s->alternate_scan;
     info->top_field_first                   = s->top_field_first;
     for (i = 0; i < 64; ++i) {
-        info->intra_quantizer_matrix[i]     = s->intra_matrix[i];
-        info->non_intra_quantizer_matrix[i] = s->inter_matrix[i];
+        int n = s->idsp.idct_permutation[i];
+        info->intra_quantizer_matrix[i]     = s->intra_matrix[n];
+        info->non_intra_quantizer_matrix[i] = s->inter_matrix[n];
     }
 
     ff_vdpau_common_start_frame(pic_ctx, buffer, size);

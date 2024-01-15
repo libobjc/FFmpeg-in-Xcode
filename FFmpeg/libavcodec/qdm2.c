@@ -36,11 +36,14 @@
 #include <stdio.h>
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem_internal.h"
+#include "libavutil/thread.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "get_bits.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "internal.h"
 #include "mpegaudio.h"
 #include "mpegaudiodsp.h"
@@ -205,7 +208,7 @@ static int qdm2_get_vlc(GetBitContext *gb, const VLC *vlc, int flag, int depth)
     value = get_vlc2(gb, vlc->table, vlc->bits, depth);
 
     /* stage-2, 3 bits exponent escape sequence */
-    if (value-- == 0)
+    if (value < 0)
         value = get_bits(gb, get_bits(gb, 3) + 1);
 
     /* stage-3, optional */
@@ -1334,6 +1337,9 @@ static void qdm2_fft_decode_tones(QDM2Context *q, int duration,
         if (q->frequency_range > (local_int_14 + 1)) {
             int sub_packet = (local_int_20 + local_int_28);
 
+            if (q->fft_coefs_index + stereo >= FF_ARRAY_ELEMS(q->fft_coefs))
+                return;
+
             qdm2_fft_init_coefficient(q, sub_packet, offset, duration,
                                       channel, exp, phase);
             if (stereo)
@@ -1591,22 +1597,14 @@ static void qdm2_synthesis_filter(QDM2Context *q, int index)
 
 /**
  * Init static data (does not depend on specific file)
- *
- * @param q    context
  */
 static av_cold void qdm2_init_static_data(void) {
-    static int done;
-
-    if(done)
-        return;
-
     qdm2_init_vlc();
-    ff_mpa_synth_init_float(ff_mpa_synth_window_float);
     softclip_table_init();
     rnd_table_init();
     init_noise_samples();
 
-    done = 1;
+    ff_mpa_synth_init_float();
 }
 
 /**
@@ -1614,11 +1612,10 @@ static av_cold void qdm2_init_static_data(void) {
  */
 static av_cold int qdm2_decode_init(AVCodecContext *avctx)
 {
+    static AVOnce init_static_once = AV_ONCE_INIT;
     QDM2Context *s = avctx->priv_data;
     int tmp_val, tmp, size;
     GetByteContext gb;
-
-    qdm2_init_static_data();
 
     /* extradata parsing
 
@@ -1691,20 +1688,20 @@ static av_cold int qdm2_decode_init(AVCodecContext *avctx)
 
     bytestream2_skip(&gb, 4);
 
-    avctx->channels = s->nb_channels = s->channels = bytestream2_get_be32(&gb);
+    s->nb_channels = s->channels = bytestream2_get_be32(&gb);
     if (s->channels <= 0 || s->channels > MPA_MAX_CHANNELS) {
         av_log(avctx, AV_LOG_ERROR, "Invalid number of channels\n");
         return AVERROR_INVALIDDATA;
     }
-    avctx->channel_layout = avctx->channels == 2 ? AV_CH_LAYOUT_STEREO :
-                                                   AV_CH_LAYOUT_MONO;
+    av_channel_layout_uninit(&avctx->ch_layout);
+    av_channel_layout_default(&avctx->ch_layout, s->channels);
 
     avctx->sample_rate = bytestream2_get_be32(&gb);
     avctx->bit_rate = bytestream2_get_be32(&gb);
     s->group_size = bytestream2_get_be32(&gb);
     s->fft_size = bytestream2_get_be32(&gb);
     s->checksum_size = bytestream2_get_be32(&gb);
-    if (s->checksum_size >= 1U << 28 || !s->checksum_size) {
+    if (s->checksum_size >= 1U << 28 || s->checksum_size <= 1) {
         av_log(avctx, AV_LOG_ERROR, "data block size invalid (%u)\n", s->checksum_size);
         return AVERROR_INVALIDDATA;
     }
@@ -1726,6 +1723,11 @@ static av_cold int qdm2_decode_init(AVCodecContext *avctx)
 
     s->sub_sampling = s->fft_order - 7;
     s->frequency_range = 255 / (1 << (2 - s->sub_sampling));
+
+    if (s->frame_size * 4 >> s->sub_sampling > MPA_FRAME_SIZE) {
+        avpriv_request_sample(avctx, "large frames");
+        return AVERROR_PATCHWELCOME;
+    }
 
     switch ((s->sub_sampling * 2 + s->channels - 1)) {
         case 0: tmp = 40; break;
@@ -1759,6 +1761,8 @@ static av_cold int qdm2_decode_init(AVCodecContext *avctx)
     ff_mpadsp_init(&s->mpadsp);
 
     avctx->sample_fmt = AV_SAMPLE_FMT_S16;
+
+    ff_thread_once(&init_static_once, qdm2_init_static_data);
 
     return 0;
 }
@@ -1834,10 +1838,9 @@ static int qdm2_decode(QDM2Context *q, const uint8_t *in, int16_t *out)
     return 0;
 }
 
-static int qdm2_decode_frame(AVCodecContext *avctx, void *data,
+static int qdm2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
                              int *got_frame_ptr, AVPacket *avpkt)
 {
-    AVFrame *frame     = data;
     const uint8_t *buf = avpkt->data;
     int buf_size = avpkt->size;
     QDM2Context *s = avctx->priv_data;
@@ -1866,14 +1869,15 @@ static int qdm2_decode_frame(AVCodecContext *avctx, void *data,
     return s->checksum_size;
 }
 
-AVCodec ff_qdm2_decoder = {
-    .name             = "qdm2",
-    .long_name        = NULL_IF_CONFIG_SMALL("QDesign Music Codec 2"),
-    .type             = AVMEDIA_TYPE_AUDIO,
-    .id               = AV_CODEC_ID_QDM2,
+const FFCodec ff_qdm2_decoder = {
+    .p.name           = "qdm2",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("QDesign Music Codec 2"),
+    .p.type           = AVMEDIA_TYPE_AUDIO,
+    .p.id             = AV_CODEC_ID_QDM2,
     .priv_data_size   = sizeof(QDM2Context),
     .init             = qdm2_decode_init,
     .close            = qdm2_decode_close,
-    .decode           = qdm2_decode_frame,
-    .capabilities     = AV_CODEC_CAP_DR1,
+    FF_CODEC_DECODE_CB(qdm2_decode_frame),
+    .p.capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE,
 };

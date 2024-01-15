@@ -26,12 +26,10 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "avio_internal.h"
+#include "rawenc.h"
 
 #define RAND_TAG MKBETAG('R','a','n','d')
-
-typedef struct FilmstripMuxContext {
-    int nb_frames;
-} FilmstripMuxContext;
 
 static int write_header(AVFormatContext *s)
 {
@@ -42,23 +40,13 @@ static int write_header(AVFormatContext *s)
     return 0;
 }
 
-static int write_packet(AVFormatContext *s, AVPacket *pkt)
-{
-    FilmstripMuxContext *film = s->priv_data;
-    avio_write(s->pb, pkt->data, pkt->size);
-    film->nb_frames++;
-    return 0;
-}
-
 static int write_trailer(AVFormatContext *s)
 {
-    FilmstripMuxContext *film = s->priv_data;
     AVIOContext *pb = s->pb;
     AVStream *st = s->streams[0];
-    int i;
 
     avio_wb32(pb, RAND_TAG);
-    avio_wb32(pb, film->nb_frames);
+    avio_wb32(pb, st->nb_frames);
     avio_wb16(pb, 0);  // packing method
     avio_wb16(pb, 0);  // reserved
     avio_wb16(pb, st->codecpar->width);
@@ -66,20 +54,18 @@ static int write_trailer(AVFormatContext *s)
     avio_wb16(pb, 0);  // leading
     // TODO: should be avg_frame_rate
     avio_wb16(pb, st->time_base.den / st->time_base.num);
-    for (i = 0; i < 16; i++)
-        avio_w8(pb, 0x00);  // reserved
+    ffio_fill(pb, 0x00, 16);  // reserved
 
     return 0;
 }
 
-AVOutputFormat ff_filmstrip_muxer = {
+const AVOutputFormat ff_filmstrip_muxer = {
     .name              = "filmstrip",
     .long_name         = NULL_IF_CONFIG_SMALL("Adobe Filmstrip"),
     .extensions        = "flm",
-    .priv_data_size    = sizeof(FilmstripMuxContext),
     .audio_codec       = AV_CODEC_ID_NONE,
     .video_codec       = AV_CODEC_ID_RAWVIDEO,
     .write_header      = write_header,
-    .write_packet      = write_packet,
+    .write_packet      = ff_raw_write_packet,
     .write_trailer     = write_trailer,
 };

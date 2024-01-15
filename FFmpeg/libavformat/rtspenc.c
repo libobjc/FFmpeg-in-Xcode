@@ -24,6 +24,7 @@
 #if HAVE_POLL_H
 #include <poll.h>
 #endif
+#include "mux.h"
 #include "network.h"
 #include "os_support.h"
 #include "rtsp.h"
@@ -34,7 +35,6 @@
 #include "libavutil/time.h"
 #include "url.h"
 
-#define SDP_MAX_SIZE 16384
 
 static const AVClass rtsp_muxer_class = {
     .class_name = "RTSP muxer",
@@ -50,7 +50,7 @@ int ff_rtsp_setup_output_streams(AVFormatContext *s, const char *addr)
     int i;
     char *sdp;
     AVFormatContext sdp_ctx, *ctx_array[1];
-    char url[1024];
+    char url[MAX_URL_SIZE];
 
     if (s->start_time_realtime == 0  ||  s->start_time_realtime == AV_NOPTS_VALUE)
         s->start_time_realtime = av_gettime();
@@ -112,7 +112,7 @@ static int rtsp_write_record(AVFormatContext *s)
 {
     RTSPState *rt = s->priv_data;
     RTSPMessageHeader reply1, *reply = &reply1;
-    char cmd[1024];
+    char cmd[MAX_URL_SIZE];
 
     snprintf(cmd, sizeof(cmd),
              "Range: npt=0.000-\r\n");
@@ -175,7 +175,7 @@ int ff_rtsp_tcp_write_packet(AVFormatContext *s, RTSPStream *rtsp_st)
         size -= packet_len;
     }
     av_free(buf);
-    return ffio_open_dyn_packet_buf(&rtpctx->pb, RTSP_TCP_MAX_PACKET_SIZE);
+    return ffio_open_dyn_packet_buf(&rtpctx->pb, rt->pkt_size);
 }
 
 static int rtsp_write_packet(AVFormatContext *s, AVPacket *pkt)
@@ -201,8 +201,11 @@ static int rtsp_write_packet(AVFormatContext *s, AVPacket *pkt)
             ret = ff_rtsp_read_reply(s, &reply, NULL, 1, NULL);
             if (ret < 0)
                 return AVERROR(EPIPE);
-            if (ret == 1)
-                ff_rtsp_skip_packet(s);
+            if (ret == 1) {
+                ret = ff_rtsp_skip_packet(s);
+                if (ret < 0)
+                    return ret;
+            }
             /* XXX: parse message */
             if (rt->state != RTSP_STATE_STREAMING)
                 return AVERROR(EPIPE);
@@ -241,7 +244,7 @@ static int rtsp_write_close(AVFormatContext *s)
     return 0;
 }
 
-AVOutputFormat ff_rtsp_muxer = {
+const AVOutputFormat ff_rtsp_muxer = {
     .name              = "rtsp",
     .long_name         = NULL_IF_CONFIG_SMALL("RTSP output"),
     .priv_data_size    = sizeof(RTSPState),

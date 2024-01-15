@@ -45,6 +45,7 @@ static int bmp_parse(AVCodecParserContext *s, AVCodecContext *avctx,
     int i = 0;
 
     *poutbuf_size = 0;
+    *poutbuf = NULL;
 
 restart:
     if (bpc->pc.frame_start_found <= 2+4+4) {
@@ -104,7 +105,7 @@ flush:
     return next;
 }
 
-AVCodecParser ff_bmp_parser = {
+const AVCodecParser ff_bmp_parser = {
     .codec_ids      = { AV_CODEC_ID_BMP },
     .priv_data_size = sizeof(BMPParseContext),
     .parser_parse   = bmp_parse,

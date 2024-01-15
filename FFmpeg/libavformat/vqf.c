@@ -97,7 +97,7 @@ static int vqf_read_header(AVFormatContext *s)
     int rate_flag = -1;
     int header_size;
     int read_bitrate = 0;
-    int size;
+    int size, ret;
     uint8_t comm_chunk[12];
 
     if (!st)
@@ -132,13 +132,16 @@ static int vqf_read_header(AVFormatContext *s)
 
         switch(chunk_tag){
         case MKTAG('C','O','M','M'):
+            if (len < 12)
+                return AVERROR_INVALIDDATA;
+
             avio_read(s->pb, comm_chunk, 12);
-            st->codecpar->channels = AV_RB32(comm_chunk    ) + 1;
+            st->codecpar->ch_layout.nb_channels = AV_RB32(comm_chunk) + 1;
             read_bitrate        = AV_RB32(comm_chunk + 4);
             rate_flag           = AV_RB32(comm_chunk + 8);
             avio_skip(s->pb, len-12);
 
-            if (st->codecpar->channels <= 0) {
+            if (st->codecpar->ch_layout.nb_channels <= 0) {
                 av_log(s, AV_LOG_ERROR, "Invalid number of channels\n");
                 return AVERROR_INVALIDDATA;
             }
@@ -189,15 +192,15 @@ static int vqf_read_header(AVFormatContext *s)
         break;
     }
 
-    if (read_bitrate / st->codecpar->channels <  8 ||
-        read_bitrate / st->codecpar->channels > 48) {
+    if (read_bitrate / st->codecpar->ch_layout.nb_channels <  8 ||
+        read_bitrate / st->codecpar->ch_layout.nb_channels > 48) {
         av_log(s, AV_LOG_ERROR, "Invalid bitrate per channel %d\n",
-               read_bitrate / st->codecpar->channels);
+               read_bitrate / st->codecpar->ch_layout.nb_channels);
         return AVERROR_INVALIDDATA;
     }
 
     switch (((st->codecpar->sample_rate/1000) << 8) +
-            read_bitrate/st->codecpar->channels) {
+            read_bitrate/st->codecpar->ch_layout.nb_channels) {
     case (11<<8) + 8 :
     case (8 <<8) + 8 :
     case (11<<8) + 10:
@@ -222,8 +225,8 @@ static int vqf_read_header(AVFormatContext *s)
     avpriv_set_pts_info(st, 64, size, st->codecpar->sample_rate);
 
     /* put first 12 bytes of COMM chunk in extradata */
-    if (ff_alloc_extradata(st->codecpar, 12))
-        return AVERROR(ENOMEM);
+    if ((ret = ff_alloc_extradata(st->codecpar, 12)) < 0)
+        return ret;
     memcpy(st->codecpar->extradata, comm_chunk, 12);
 
     ff_metadata_conv_ctx(s, NULL, vqf_metadata_conv);
@@ -237,8 +240,8 @@ static int vqf_read_packet(AVFormatContext *s, AVPacket *pkt)
     int ret;
     int size = (c->frame_bit_len - c->remaining_bits + 7)>>3;
 
-    if (av_new_packet(pkt, size+2) < 0)
-        return AVERROR(EIO);
+    if ((ret = av_new_packet(pkt, size + 2)) < 0)
+        return ret;
 
     pkt->pos          = avio_tell(s->pb);
     pkt->stream_index = 0;
@@ -249,7 +252,6 @@ static int vqf_read_packet(AVFormatContext *s, AVPacket *pkt)
     ret = avio_read(s->pb, pkt->data+2, size);
 
     if (ret != size) {
-        av_packet_unref(pkt);
         return AVERROR(EIO);
     }
 
@@ -275,17 +277,17 @@ static int vqf_read_seek(AVFormatContext *s,
                                                    AV_ROUND_DOWN : AV_ROUND_UP);
     pos *= c->frame_bit_len;
 
-    st->cur_dts = av_rescale(pos, st->time_base.den,
+    ffstream(st)->cur_dts = av_rescale(pos, st->time_base.den,
                              st->codecpar->bit_rate * (int64_t)st->time_base.num);
 
-    if ((ret = avio_seek(s->pb, ((pos-7) >> 3) + s->internal->data_offset, SEEK_SET)) < 0)
+    if ((ret = avio_seek(s->pb, ((pos-7) >> 3) + ffformatcontext(s)->data_offset, SEEK_SET)) < 0)
         return ret;
 
     c->remaining_bits = -7 - ((pos-7)&7);
     return 0;
 }
 
-AVInputFormat ff_vqf_demuxer = {
+const AVInputFormat ff_vqf_demuxer = {
     .name           = "vqf",
     .long_name      = NULL_IF_CONFIG_SMALL("Nippon Telegraph and Telephone Corporation (NTT) TwinVQ"),
     .priv_data_size = sizeof(VqfContext),

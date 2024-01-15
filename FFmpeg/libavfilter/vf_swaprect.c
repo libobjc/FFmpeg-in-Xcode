@@ -22,7 +22,6 @@
 #include "libavutil/eval.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
-#include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
 #include "formats.h"
@@ -43,7 +42,7 @@ typedef struct SwapRectContext {
 } SwapRectContext;
 
 #define OFFSET(x) offsetof(SwapRectContext, x)
-#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
+#define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 static const AVOption swaprect_options[] = {
     { "w",  "set rect width",                     OFFSET(w),  AV_OPT_TYPE_STRING, {.str="w/2"}, 0, 0, .flags = FLAGS },
     { "h",  "set rect height",                    OFFSET(h),  AV_OPT_TYPE_STRING, {.str="h/2"}, 0, 0, .flags = FLAGS },
@@ -58,19 +57,11 @@ AVFILTER_DEFINE_CLASS(swaprect);
 
 static int query_formats(AVFilterContext *ctx)
 {
-    AVFilterFormats *pix_fmts = NULL;
-    int fmt, ret;
+    int reject_flags = AV_PIX_FMT_FLAG_PAL     |
+                       AV_PIX_FMT_FLAG_HWACCEL |
+                       AV_PIX_FMT_FLAG_BITSTREAM;
 
-    for (fmt = 0; av_pix_fmt_desc_get(fmt); fmt++) {
-        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
-        if (!(desc->flags & AV_PIX_FMT_FLAG_PAL ||
-              desc->flags & AV_PIX_FMT_FLAG_HWACCEL ||
-              desc->flags & AV_PIX_FMT_FLAG_BITSTREAM) &&
-            (ret = ff_add_format(&pix_fmts, fmt)) < 0)
-            return ret;
-    }
-
-    return ff_set_common_formats(ctx, pix_fmts);
+    return ff_set_common_formats(ctx, ff_formats_pixdesc_filter(0, reject_flags));
 }
 
 static const char *const var_names[] = {   "w",   "h",   "a",   "n",   "t",   "pos",   "sar",   "dar",        NULL };
@@ -99,7 +90,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     var_values[VAR_DAR] = var_values[VAR_A] * var_values[VAR_SAR];
     var_values[VAR_N]   = inlink->frame_count_out;
     var_values[VAR_T]   = in->pts == AV_NOPTS_VALUE ? NAN : in->pts * av_q2d(inlink->time_base);
-    var_values[VAR_POS] = in->pkt_pos ? NAN : in->pkt_pos;
+    var_values[VAR_POS] = in->pkt_pos == -1 ? NAN : in->pkt_pos;
 
     ret = av_expr_parse_and_eval(&dw, s->w,
                                  var_names, &var_values[0],
@@ -228,11 +219,10 @@ static const AVFilterPad inputs[] = {
     {
         .name           = "default",
         .type           = AVMEDIA_TYPE_VIDEO,
+        .flags          = AVFILTERPAD_FLAG_NEEDS_WRITABLE,
         .filter_frame   = filter_frame,
         .config_props   = config_input,
-        .needs_writable = 1,
     },
-    { NULL }
 };
 
 static const AVFilterPad outputs[] = {
@@ -240,17 +230,17 @@ static const AVFilterPad outputs[] = {
         .name = "default",
         .type = AVMEDIA_TYPE_VIDEO,
     },
-    { NULL }
 };
 
-AVFilter ff_vf_swaprect = {
+const AVFilter ff_vf_swaprect = {
     .name          = "swaprect",
     .description   = NULL_IF_CONFIG_SMALL("Swap 2 rectangular objects in video."),
     .priv_size     = sizeof(SwapRectContext),
     .priv_class    = &swaprect_class,
-    .query_formats = query_formats,
     .uninit        = uninit,
-    .inputs        = inputs,
-    .outputs       = outputs,
+    FILTER_INPUTS(inputs),
+    FILTER_OUTPUTS(outputs),
+    FILTER_QUERY_FUNC(query_formats),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
+    .process_command = ff_filter_process_command,
 };

@@ -18,8 +18,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "avcodec.h"
 #include "bsf.h"
+#include "bsf_internal.h"
 #include "get_bits.h"
 #include "mlp_parse.h"
 #include "mlp.h"
@@ -31,8 +31,6 @@ typedef struct AccessUnit {
 } AccessUnit;
 
 typedef struct TrueHDCoreContext {
-    const AVClass *class;
-
     MLPHeaderInfo hdr;
 } TrueHDCoreContext;
 
@@ -175,10 +173,10 @@ static const enum AVCodecID codec_ids[] = {
     AV_CODEC_ID_TRUEHD, AV_CODEC_ID_NONE,
 };
 
-const AVBitStreamFilter ff_truehd_core_bsf = {
-    .name           = "truehd_core",
+const FFBitStreamFilter ff_truehd_core_bsf = {
+    .p.name         = "truehd_core",
+    .p.codec_ids    = codec_ids,
     .priv_data_size = sizeof(TrueHDCoreContext),
     .filter         = truehd_core_filter,
     .flush          = truehd_core_flush,
-    .codec_ids      = codec_ids,
 };
