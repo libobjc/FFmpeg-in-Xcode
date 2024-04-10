@@ -4,9 +4,9 @@
 
 ## Condition
 
-- FFmpeg : 6.1
+- FFmpeg : 7.0
 - SDL : 2.28.5
-- Xcode : 14.3.1
+- Xcode : 15.3
 - configuration  : --disable-asm --disable-lzma --disable-filter=yadif_videotoolbox
 
 ## Schemes

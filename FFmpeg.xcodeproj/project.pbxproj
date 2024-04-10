@@ -6361,6 +6361,7 @@
 		9C1D89FE2BC6B18E00CCD2C8 /* sync_queue.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sync_queue.h; sourceTree = "<group>"; };
 		9C1D89FF2BC6B18E00CCD2C8 /* thread_queue.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = thread_queue.c; sourceTree = "<group>"; };
 		9C1D8A002BC6B18E00CCD2C8 /* thread_queue.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = thread_queue.h; sourceTree = "<group>"; };
+		9C1D8A182BC6B8E400CCD2C8 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		9C35EC2F219354EB00FD4FE8 /* ffplay */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ffplay; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C35EC3F2193553300FD4FE8 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
 		9C35EC412193553A00FD4FE8 /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
@@ -9838,6 +9839,7 @@
 		9CD550BE219337510075012A = {
 			isa = PBXGroup;
 			children = (
+				9C1D8A182BC6B8E400CCD2C8 /* README.md */,
 				4EC227BD2B52F62C00CACFB0 /* SDL.xcodeproj */,
 				9CD550C9219337510075012A /* FFmpeg */,
 				9C35EC8B2193592300FD4FE8 /* Build */,
