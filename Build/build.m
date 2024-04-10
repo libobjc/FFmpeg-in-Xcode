@@ -92,8 +92,8 @@ NSString * SGFAppend(NSString *s, NSString *a)
  */
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        NSString *s = @"/Users/gary/Desktop/Coding/FFmpeg";
-        NSString *d = @"/Users/gary/Desktop/Coding/FFmpeg-in-Xcode/FFmpeg";
+        NSString *s = @"/Users/single/Documents/coding/github/FFmpeg";
+        NSString *d = @"/Users/single/Documents/coding/github/FFmpeg-in-Xcode/FFmpeg";
         
         NSArray * dirs = @[@"fftools",
                            @"libavcodec",
@@ -152,6 +152,12 @@ int main(int argc, const char * argv[]) {
             SGFReplace(SGFAppend(d, @"fftools/ffplay.c"),
                        @"#include <SDL_thread.h>",
                        @"// Edit by Single\n#include <SDL2/SDL_thread.h>");
+            SGFReplace(SGFAppend(d, @"fftools/ffplay_renderer.h"),
+                       @"#include <SDL.h>",
+                       @"// Edit by Single\n#include <SDL2/SDL.h>");
+            SGFReplace(SGFAppend(d, @"libavcodec/bsf/mpeg4_unpack_bframes.c"),
+                       @"#include \"startcode.h\"",
+                       @"// Edit by Single\n#include \"../startcode.h\"");
         }
     }
     return 0;
