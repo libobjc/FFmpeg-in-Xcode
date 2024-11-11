@@ -7,13 +7,29 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4E5A54F02B558E3A00CF650E /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9CE714EC21934C56006527D2 /* CoreAudio.framework */; };
+		4EC030C42CE2306F0063DEA8 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
+		4EC030C52CE2306F0063DEA8 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC3F2193553300FD4FE8 /* libbz2.tbd */; };
+		4EC030C62CE2306F0063DEA8 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC412193553A00FD4FE8 /* libiconv.tbd */; };
+		4EC030C72CE2306F0063DEA8 /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
+		4EC030CD2CE230A30063DEA8 /* ffmpeg_mux_init.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EB2BC6B18E00CCD2C8 /* ffmpeg_mux_init.c */; };
+		4EC030CE2CE230A30063DEA8 /* ffmpeg_hw.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EA2BC6B18E00CCD2C8 /* ffmpeg_hw.c */; };
+		4EC030CF2CE230A30063DEA8 /* ffmpeg_dec.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E62BC6B18E00CCD2C8 /* ffmpeg_dec.c */; };
+		4EC030D02CE230A30063DEA8 /* ffmpeg_demux.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E72BC6B18E00CCD2C8 /* ffmpeg_demux.c */; };
+		4EC030D12CE230A30063DEA8 /* ffmpeg_filter.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E92BC6B18E00CCD2C8 /* ffmpeg_filter.c */; };
+		4EC030D22CE230A30063DEA8 /* ffmpeg_enc.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E82BC6B18E00CCD2C8 /* ffmpeg_enc.c */; };
+		4EC030D32CE230A30063DEA8 /* ffmpeg_mux.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EC2BC6B18E00CCD2C8 /* ffmpeg_mux.c */; };
+		4EC030D42CE230B90063DEA8 /* objpool.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89F92BC6B18E00CCD2C8 /* objpool.c */; };
+		4EC030D52CE230B90063DEA8 /* thread_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FF2BC6B18E00CCD2C8 /* thread_queue.c */; };
+		4EC030D62CE230B90063DEA8 /* opt_common.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FB2BC6B18E00CCD2C8 /* opt_common.c */; };
+		4EC030D72CE230B90063DEA8 /* ffmpeg_opt.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EE2BC6B18E00CCD2C8 /* ffmpeg_opt.c */; };
+		4EC030D82CE230B90063DEA8 /* ffmpeg.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89F22BC6B18E00CCD2C8 /* ffmpeg.c */; };
+		4EC030D92CE230B90063DEA8 /* sync_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FD2BC6B18E00CCD2C8 /* sync_queue.c */; };
+		4EC030DA2CE230B90063DEA8 /* cmdutils.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E42BC6B18E00CCD2C8 /* cmdutils.c */; };
+		4EC030DB2CE230B90063DEA8 /* ffmpeg_sched.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EF2BC6B18E00CCD2C8 /* ffmpeg_sched.c */; };
 		4EC227FC2B537DA100CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
 		4EC227FD2B537DEE00CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
-		4EC227FE2B537DF500CACFB0 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
 		4EDF07952B555E5E00046703 /* SDL2.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EC227CC2B52F62C00CACFB0 /* SDL2.framework */; };
 		9C16AEC92193FFD60044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
-		9C16AECA2193FFDB0044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
 		9C16AECB2193FFE00044126F /* libFFmpeg.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C169A872193E8FC0044126F /* libFFmpeg.a */; };
 		9C1D7DE02BC6B17000CCD2C8 /* postprocess_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = 9C1D71BB2BC6B16E00CCD2C8 /* postprocess_internal.h */; };
 		9C1D7DE12BC6B17000CCD2C8 /* postprocess.h in Headers */ = {isa = PBXBuildFile; fileRef = 9C1D71BC2BC6B16E00CCD2C8 /* postprocess.h */; };
@@ -3097,26 +3113,9 @@
 		9C1D8A052BC6B5A900CCD2C8 /* cmdutils.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E42BC6B18E00CCD2C8 /* cmdutils.c */; };
 		9C1D8A062BC6B60C00CCD2C8 /* ffprobe.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89F72BC6B18E00CCD2C8 /* ffprobe.c */; };
 		9C1D8A072BC6B61800CCD2C8 /* opt_common.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FB2BC6B18E00CCD2C8 /* opt_common.c */; };
-		9C1D8A082BC6B61E00CCD2C8 /* opt_common.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FB2BC6B18E00CCD2C8 /* opt_common.c */; };
 		9C1D8A092BC6B62100CCD2C8 /* cmdutils.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E42BC6B18E00CCD2C8 /* cmdutils.c */; };
-		9C1D8A0A2BC6B62200CCD2C8 /* cmdutils.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E42BC6B18E00CCD2C8 /* cmdutils.c */; };
-		9C1D8A0B2BC6B64F00CCD2C8 /* ffmpeg.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89F22BC6B18E00CCD2C8 /* ffmpeg.c */; };
-		9C1D8A0C2BC6B65300CCD2C8 /* ffmpeg_sched.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EF2BC6B18E00CCD2C8 /* ffmpeg_sched.c */; };
-		9C1D8A0D2BC6B65600CCD2C8 /* ffmpeg_opt.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EE2BC6B18E00CCD2C8 /* ffmpeg_opt.c */; };
-		9C1D8A0E2BC6B65A00CCD2C8 /* ffmpeg_hw.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EA2BC6B18E00CCD2C8 /* ffmpeg_hw.c */; };
-		9C1D8A0F2BC6B65A00CCD2C8 /* ffmpeg_mux.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EC2BC6B18E00CCD2C8 /* ffmpeg_mux.c */; };
-		9C1D8A102BC6B65A00CCD2C8 /* ffmpeg_mux_init.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89EB2BC6B18E00CCD2C8 /* ffmpeg_mux_init.c */; };
-		9C1D8A112BC6B65A00CCD2C8 /* ffmpeg_enc.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E82BC6B18E00CCD2C8 /* ffmpeg_enc.c */; };
-		9C1D8A122BC6B65A00CCD2C8 /* ffmpeg_demux.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E72BC6B18E00CCD2C8 /* ffmpeg_demux.c */; };
-		9C1D8A132BC6B65A00CCD2C8 /* ffmpeg_dec.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E62BC6B18E00CCD2C8 /* ffmpeg_dec.c */; };
-		9C1D8A142BC6B65A00CCD2C8 /* ffmpeg_filter.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89E92BC6B18E00CCD2C8 /* ffmpeg_filter.c */; };
-		9C1D8A152BC6B68000CCD2C8 /* objpool.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89F92BC6B18E00CCD2C8 /* objpool.c */; };
-		9C1D8A162BC6B68800CCD2C8 /* sync_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FD2BC6B18E00CCD2C8 /* sync_queue.c */; };
-		9C1D8A172BC6B6A100CCD2C8 /* thread_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C1D89FF2BC6B18E00CCD2C8 /* thread_queue.c */; };
 		9C35EC402193553300FD4FE8 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC3F2193553300FD4FE8 /* libbz2.tbd */; };
 		9C35EC422193553A00FD4FE8 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC412193553A00FD4FE8 /* libiconv.tbd */; };
-		9C35EC592193574F00FD4FE8 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC3F2193553300FD4FE8 /* libbz2.tbd */; };
-		9C35EC5A2193575C00FD4FE8 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC412193553A00FD4FE8 /* libiconv.tbd */; };
 		9C35EC6E2193579100FD4FE8 /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC412193553A00FD4FE8 /* libiconv.tbd */; };
 		9C35EC6F2193579700FD4FE8 /* libbz2.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 9C35EC3F2193553300FD4FE8 /* libbz2.tbd */; };
 		9C993F932193DB20003761DB /* build.m in Sources */ = {isa = PBXBuildFile; fileRef = 9C993F922193DB20003761DB /* build.m */; };
@@ -3204,7 +3203,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		9C35EC2D219354EB00FD4FE8 /* CopyFiles */ = {
+		4EC030C82CE2306F0063DEA8 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = /usr/share/man/man1/;
@@ -3213,7 +3212,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 1;
 		};
-		9C35EC46219356DE00FD4FE8 /* CopyFiles */ = {
+		9C35EC2D219354EB00FD4FE8 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = /usr/share/man/man1/;
@@ -3252,6 +3251,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		4EC030CC2CE2306F0063DEA8 /* ffmpeg-cmd */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "ffmpeg-cmd"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EC227BD2B52F62C00CACFB0 /* SDL.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = SDL.xcodeproj; path = SDL/Xcode/SDL/SDL.xcodeproj; sourceTree = "<group>"; };
 		4EC227F92B537D4100CACFB0 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		4EDF07A02B55609E00046703 /* CoreAudioTypes.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudioTypes.framework; path = System/Library/Frameworks/CoreAudioTypes.framework; sourceTree = SDKROOT; };
@@ -6365,7 +6365,6 @@
 		9C35EC2F219354EB00FD4FE8 /* ffplay */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ffplay; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C35EC3F2193553300FD4FE8 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
 		9C35EC412193553A00FD4FE8 /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
-		9C35EC48219356DE00FD4FE8 /* ffmpeg */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ffmpeg; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C35EC5F2193577A00FD4FE8 /* ffprobe */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ffprobe; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C993F802193DAD0003761DB /* build-1 */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "build-1"; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C993F8B2193DAE8003761DB /* build-2 */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "build-2"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -6384,6 +6383,17 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		4EC030C32CE2306F0063DEA8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4EC030C42CE2306F0063DEA8 /* SDL2.framework in Frameworks */,
+				4EC030C52CE2306F0063DEA8 /* libbz2.tbd in Frameworks */,
+				4EC030C62CE2306F0063DEA8 /* libiconv.tbd in Frameworks */,
+				4EC030C72CE2306F0063DEA8 /* libFFmpeg.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9C169A852193E8FC0044126F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -6400,18 +6410,6 @@
 				9C35EC402193553300FD4FE8 /* libbz2.tbd in Frameworks */,
 				9C35EC422193553A00FD4FE8 /* libiconv.tbd in Frameworks */,
 				9C16AEC92193FFD60044126F /* libFFmpeg.a in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		9C35EC45219356DE00FD4FE8 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				4E5A54F02B558E3A00CF650E /* CoreAudio.framework in Frameworks */,
-				4EC227FE2B537DF500CACFB0 /* SDL2.framework in Frameworks */,
-				9C35EC592193574F00FD4FE8 /* libbz2.tbd in Frameworks */,
-				9C35EC5A2193575C00FD4FE8 /* libiconv.tbd in Frameworks */,
-				9C16AECA2193FFDB0044126F /* libFFmpeg.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -9852,11 +9850,11 @@
 			isa = PBXGroup;
 			children = (
 				9C35EC2F219354EB00FD4FE8 /* ffplay */,
-				9C35EC48219356DE00FD4FE8 /* ffmpeg */,
 				9C35EC5F2193577A00FD4FE8 /* ffprobe */,
 				9C993F802193DAD0003761DB /* build-1 */,
 				9C993F8B2193DAE8003761DB /* build-2 */,
 				9C169A872193E8FC0044126F /* libFFmpeg.a */,
+				4EC030CC2CE2306F0063DEA8 /* ffmpeg-cmd */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -11015,6 +11013,23 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
+		4EC030BD2CE2306F0063DEA8 /* ffmpeg-cmd */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4EC030C92CE2306F0063DEA8 /* Build configuration list for PBXNativeTarget "ffmpeg-cmd" */;
+			buildPhases = (
+				4EC030BE2CE2306F0063DEA8 /* Sources */,
+				4EC030C32CE2306F0063DEA8 /* Frameworks */,
+				4EC030C82CE2306F0063DEA8 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "ffmpeg-cmd";
+			productName = ffplay;
+			productReference = 4EC030CC2CE2306F0063DEA8 /* ffmpeg-cmd */;
+			productType = "com.apple.product-type.tool";
+		};
 		9C169A862193E8FC0044126F /* FFmpeg */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9C169A8F2193E8FC0044126F /* Build configuration list for PBXNativeTarget "FFmpeg" */;
@@ -11047,23 +11062,6 @@
 			name = ffplay;
 			productName = ffplay;
 			productReference = 9C35EC2F219354EB00FD4FE8 /* ffplay */;
-			productType = "com.apple.product-type.tool";
-		};
-		9C35EC47219356DE00FD4FE8 /* ffmpeg */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 9C35EC4C219356DE00FD4FE8 /* Build configuration list for PBXNativeTarget "ffmpeg" */;
-			buildPhases = (
-				9C35EC44219356DE00FD4FE8 /* Sources */,
-				9C35EC45219356DE00FD4FE8 /* Frameworks */,
-				9C35EC46219356DE00FD4FE8 /* CopyFiles */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = ffmpeg;
-			productName = ffmpeg;
-			productReference = 9C35EC48219356DE00FD4FE8 /* ffmpeg */;
 			productType = "com.apple.product-type.tool";
 		};
 		9C35EC5E2193577A00FD4FE8 /* ffprobe */ = {
@@ -11132,9 +11130,6 @@
 					9C35EC2E219354EB00FD4FE8 = {
 						CreatedOnToolsVersion = 10.0;
 					};
-					9C35EC47219356DE00FD4FE8 = {
-						CreatedOnToolsVersion = 10.0;
-					};
 					9C35EC5E2193577A00FD4FE8 = {
 						CreatedOnToolsVersion = 10.0;
 					};
@@ -11165,11 +11160,11 @@
 			projectRoot = "";
 			targets = (
 				9C169A862193E8FC0044126F /* FFmpeg */,
-				9C35EC47219356DE00FD4FE8 /* ffmpeg */,
-				9C35EC2E219354EB00FD4FE8 /* ffplay */,
-				9C35EC5E2193577A00FD4FE8 /* ffprobe */,
 				9C993F7F2193DAD0003761DB /* build-1 */,
 				9C993F8A2193DAE8003761DB /* build-2 */,
+				9C35EC2E219354EB00FD4FE8 /* ffplay */,
+				9C35EC5E2193577A00FD4FE8 /* ffprobe */,
+				4EC030BD2CE2306F0063DEA8 /* ffmpeg-cmd */,
 			);
 		};
 /* End PBXProject section */
@@ -11255,6 +11250,28 @@
 /* End PBXReferenceProxy section */
 
 /* Begin PBXSourcesBuildPhase section */
+		4EC030BE2CE2306F0063DEA8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4EC030CD2CE230A30063DEA8 /* ffmpeg_mux_init.c in Sources */,
+				4EC030CE2CE230A30063DEA8 /* ffmpeg_hw.c in Sources */,
+				4EC030CF2CE230A30063DEA8 /* ffmpeg_dec.c in Sources */,
+				4EC030D02CE230A30063DEA8 /* ffmpeg_demux.c in Sources */,
+				4EC030D42CE230B90063DEA8 /* objpool.c in Sources */,
+				4EC030D52CE230B90063DEA8 /* thread_queue.c in Sources */,
+				4EC030D62CE230B90063DEA8 /* opt_common.c in Sources */,
+				4EC030D72CE230B90063DEA8 /* ffmpeg_opt.c in Sources */,
+				4EC030D82CE230B90063DEA8 /* ffmpeg.c in Sources */,
+				4EC030D92CE230B90063DEA8 /* sync_queue.c in Sources */,
+				4EC030DA2CE230B90063DEA8 /* cmdutils.c in Sources */,
+				4EC030DB2CE230B90063DEA8 /* ffmpeg_sched.c in Sources */,
+				4EC030D12CE230A30063DEA8 /* ffmpeg_filter.c in Sources */,
+				4EC030D22CE230A30063DEA8 /* ffmpeg_enc.c in Sources */,
+				4EC030D32CE230A30063DEA8 /* ffmpeg_mux.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9C169A842193E8FC0044126F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -13247,28 +13264,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		9C35EC44219356DE00FD4FE8 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				9C1D8A0D2BC6B65600CCD2C8 /* ffmpeg_opt.c in Sources */,
-				9C1D8A0E2BC6B65A00CCD2C8 /* ffmpeg_hw.c in Sources */,
-				9C1D8A0F2BC6B65A00CCD2C8 /* ffmpeg_mux.c in Sources */,
-				9C1D8A152BC6B68000CCD2C8 /* objpool.c in Sources */,
-				9C1D8A102BC6B65A00CCD2C8 /* ffmpeg_mux_init.c in Sources */,
-				9C1D8A112BC6B65A00CCD2C8 /* ffmpeg_enc.c in Sources */,
-				9C1D8A162BC6B68800CCD2C8 /* sync_queue.c in Sources */,
-				9C1D8A122BC6B65A00CCD2C8 /* ffmpeg_demux.c in Sources */,
-				9C1D8A132BC6B65A00CCD2C8 /* ffmpeg_dec.c in Sources */,
-				9C1D8A142BC6B65A00CCD2C8 /* ffmpeg_filter.c in Sources */,
-				9C1D8A0B2BC6B64F00CCD2C8 /* ffmpeg.c in Sources */,
-				9C1D8A0A2BC6B62200CCD2C8 /* cmdutils.c in Sources */,
-				9C1D8A0C2BC6B65300CCD2C8 /* ffmpeg_sched.c in Sources */,
-				9C1D8A082BC6B61E00CCD2C8 /* opt_common.c in Sources */,
-				9C1D8A172BC6B6A100CCD2C8 /* thread_queue.c in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		9C35EC5B2193577A00FD4FE8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -13298,6 +13293,24 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		4EC030CA2CE2306F0063DEA8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = "\"$(SRCROOT)/FFmpeg\"";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		4EC030CB2CE2306F0063DEA8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				HEADER_SEARCH_PATHS = "\"$(SRCROOT)/FFmpeg\"";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
 		9C169A8D2193E8FC0044126F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -13334,24 +13347,6 @@
 			name = Debug;
 		};
 		9C35EC35219354EB00FD4FE8 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				HEADER_SEARCH_PATHS = "\"$(SRCROOT)/FFmpeg\"";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-			};
-			name = Release;
-		};
-		9C35EC4D219356DE00FD4FE8 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				HEADER_SEARCH_PATHS = "\"$(SRCROOT)/FFmpeg\"";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-			};
-			name = Debug;
-		};
-		9C35EC4E219356DE00FD4FE8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -13524,6 +13519,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4EC030C92CE2306F0063DEA8 /* Build configuration list for PBXNativeTarget "ffmpeg-cmd" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4EC030CA2CE2306F0063DEA8 /* Debug */,
+				4EC030CB2CE2306F0063DEA8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		9C169A8F2193E8FC0044126F /* Build configuration list for PBXNativeTarget "FFmpeg" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -13538,15 +13542,6 @@
 			buildConfigurations = (
 				9C35EC34219354EB00FD4FE8 /* Debug */,
 				9C35EC35219354EB00FD4FE8 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		9C35EC4C219356DE00FD4FE8 /* Build configuration list for PBXNativeTarget "ffmpeg" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				9C35EC4D219356DE00FD4FE8 /* Debug */,
-				9C35EC4E219356DE00FD4FE8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -61,7 +61,7 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-i /Users/single/Desktop/alpha/videos/movie-hevc.mp4"
+            argument = "-i /Users/gary/Movies/movies/i-see-fire.mp4"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>
