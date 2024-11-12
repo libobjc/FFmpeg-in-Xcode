@@ -39,6 +39,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/error.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/reverse.h"
 #include "avcodec.h"
@@ -175,7 +176,7 @@ static int cmp_id_key(const void *id, const void *k)
 
 static const char *search_keyval(const TiffGeoTagKeyName *keys, int n, int id)
 {
-    TiffGeoTagKeyName *r = bsearch(&id, keys, n, sizeof(keys[0]), cmp_id_key);
+    const TiffGeoTagKeyName *r = bsearch(&id, keys, n, sizeof(keys[0]), cmp_id_key);
     if(r)
         return r->name;
 
@@ -421,7 +422,8 @@ static void av_always_inline horizontal_fill(TiffContext *s,
             uint8_t shift = is_dng ? 0 : 16 - bpp;
             GetBitContext gb;
 
-            init_get_bits8(&gb, src, width);
+            av_unused int ret = init_get_bits8(&gb, src, width);
+            av_assert1(ret >= 0);
             for (int i = 0; i < s->width; i++) {
                 dst16[i] = get_bits(&gb, bpp) << shift;
             }
@@ -455,7 +457,8 @@ static void unpack_gray(TiffContext *s, AVFrame *p,
     GetBitContext gb;
     uint16_t *dst = (uint16_t *)(p->data[0] + lnum * p->linesize[0]);
 
-    init_get_bits8(&gb, src, width);
+    av_unused int ret = init_get_bits8(&gb, src, width);
+    av_assert1(ret >= 0);
 
     for (int i = 0; i < s->width; i++) {
         dst[i] = get_bits(&gb, bpp);
@@ -1295,9 +1298,13 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         s->is_thumbnail = (value != 0);
         break;
     case TIFF_WIDTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->width = value;
         break;
     case TIFF_HEIGHT:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->height = value;
         break;
     case TIFF_BPP:
@@ -1429,12 +1436,18 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         s->tile_byte_counts_offset = off;
         break;
     case TIFF_TILE_LENGTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->tile_length = value;
         break;
     case TIFF_TILE_WIDTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->tile_width = value;
         break;
     case TIFF_PREDICTOR:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->predictor = value;
         break;
     case TIFF_SUB_IFDS:
@@ -1579,12 +1592,18 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case TIFF_T4OPTIONS:
-        if (s->compr == TIFF_G3)
+        if (s->compr == TIFF_G3) {
+            if (value > INT_MAX)
+                return AVERROR_INVALIDDATA;
             s->fax_opts = value;
+        }
         break;
     case TIFF_T6OPTIONS:
-        if (s->compr == TIFF_G4)
+        if (s->compr == TIFF_G4) {
+            if (value > INT_MAX)
+                return AVERROR_INVALIDDATA;
             s->fax_opts = value;
+        }
         break;
 #define ADD_METADATA(count, name, sep)\
     if ((ret = add_metadata(count, type, name, sep, s, frame)) < 0) {\
@@ -2266,8 +2285,10 @@ again:
             group_size = s->width * channels;
 
             tmpbuf = av_malloc(ssize);
-            if (!tmpbuf)
+            if (!tmpbuf) {
+                av_free(five_planes);
                 return AVERROR(ENOMEM);
+            }
 
             if (s->avctx->pix_fmt == AV_PIX_FMT_RGBF32LE ||
                 s->avctx->pix_fmt == AV_PIX_FMT_RGBAF32LE) {
@@ -2380,7 +2401,6 @@ again:
         }
     }
 
-    p->flags |= AV_FRAME_FLAG_KEY;
     *got_frame = 1;
 
     return avpkt->size;

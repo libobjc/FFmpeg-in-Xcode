@@ -21,6 +21,7 @@
 
 #include "libavutil/internal.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "decode.h"
@@ -159,12 +160,18 @@ static int update_residue_parameter(OSQChannel *cb)
     int rice_k;
 
     sum = cb->sum;
+    if (!sum)
+        return 0;
     x = sum / cb->count;
-    rice_k = av_ceil_log2(x);
+    rice_k = ceil(log2(x));
     if (rice_k >= 30) {
-        rice_k = floor(sum / 1.4426952 + 0.5);
-        if (rice_k < 1)
+        double f = floor(sum / 1.4426952 + 0.5);
+        if (f <= 1) {
             rice_k = 1;
+        } else if (f >= 31) {
+            rice_k = 31;
+        } else
+            rice_k = f;
     }
 
     return rice_k;
@@ -320,7 +327,7 @@ static int do_decode(AVCodecContext *avctx, AVFrame *frame, int decorrelate, int
             cb->prev = prev;
 
             if (downsample)
-                dst[n] *= 256;
+                dst[n] *= 256U;
 
             dst[E] = dst[D];
             dst[D] = dst[C];
@@ -335,7 +342,7 @@ static int do_decode(AVCodecContext *avctx, AVFrame *frame, int decorrelate, int
 
             if (nb_channels == 2 && ch == 1) {
                 if (decorrelate)
-                    dst[n] += s->decode_buffer[0][OFFSET+n];
+                    dst[n] += (unsigned)s->decode_buffer[0][OFFSET+n];
             }
 
             if (downsample)
@@ -351,7 +358,7 @@ static int osq_decode_block(AVCodecContext *avctx, AVFrame *frame)
     const int nb_channels = avctx->ch_layout.nb_channels;
     const int nb_samples = frame->nb_samples;
     OSQContext *s = avctx->priv_data;
-    const int factor = s->factor;
+    const unsigned factor = s->factor;
     int ret, decorrelate, downsample;
     GetBitContext *gb = &s->gb;
 

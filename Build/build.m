@@ -92,8 +92,8 @@ NSString * SGFAppend(NSString *s, NSString *a)
  */
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        NSString *s = @"/Users/single/Documents/coding/github/FFmpeg";
-        NSString *d = @"/Users/single/Documents/coding/github/FFmpeg-in-Xcode/FFmpeg";
+        NSString *s = @"/Users/gary/Documents/coding/github/FFmpeg";
+        NSString *d = @"/Users/gary/Documents/coding/gary/FFmpeg-in-Xcode/FFmpeg";
         
         NSArray * dirs = @[@"fftools",
                            @"libavcodec",

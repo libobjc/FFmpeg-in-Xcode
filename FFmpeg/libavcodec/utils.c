@@ -259,6 +259,9 @@ void avcodec_align_dimensions2(AVCodecContext *s, int *width, int *height,
         if (s->codec_id == AV_CODEC_ID_SVQ1) {
             w_align = 64;
             h_align = 64;
+        } else if (s->codec_id == AV_CODEC_ID_SNOW) {
+            w_align = 16;
+            h_align = 16;
         }
         break;
     case AV_PIX_FMT_RGB555:
@@ -805,14 +808,6 @@ int av_get_audio_frame_duration2(AVCodecParameters *par, int frame_bytes)
                                     frame_bytes);
     return FFMAX(0, duration);
 }
-
-#if !HAVE_THREADS
-int ff_thread_init(AVCodecContext *s)
-{
-    return -1;
-}
-
-#endif
 
 unsigned int av_xiphlacing(unsigned char *s, unsigned int v)
 {

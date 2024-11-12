@@ -77,6 +77,7 @@ static const FFOutputFormat * const muxer_list[] = {
     &ff_jacosub_muxer,
     &ff_kvag_muxer,
     &ff_latm_muxer,
+    &ff_lc3_muxer,
     &ff_lrc_muxer,
     &ff_m4v_muxer,
     &ff_md5_muxer,

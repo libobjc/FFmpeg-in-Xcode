@@ -30,6 +30,7 @@
 #include "jpegquanttables.h"
 #include "jpegtables.h"
 #include "leaddata.h"
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/thread.h"
 
@@ -181,9 +182,6 @@ static int lead_decode_frame(AVCodecContext *avctx, AVFrame * frame,
     if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
         return ret;
 
-    frame->flags |= AV_FRAME_FLAG_KEY;
-    frame->pict_type = AV_PICTURE_TYPE_I;
-
     av_fast_padded_malloc(&s->bitstream_buf, &s->bitstream_buf_size, avpkt->size - 8);
     if (!s->bitstream_buf)
         return AVERROR(ENOMEM);
@@ -196,7 +194,9 @@ static int lead_decode_frame(AVCodecContext *avctx, AVFrame * frame,
             i++;
     }
 
-    init_get_bits8(&gb, s->bitstream_buf, size);
+    ret = init_get_bits8(&gb, s->bitstream_buf, size);
+    if (ret < 0)
+        return ret;
 
     if (avctx->pix_fmt == AV_PIX_FMT_YUV420P && zero) {
         for (int mb_y = 0; mb_y < avctx->height / 8; mb_y++)

@@ -29,6 +29,7 @@
 #include <pthread.h>
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 #include "libavutil/avstring.h"
@@ -787,6 +788,9 @@ static NSArray* getDevicesWithMediaType(AVMediaType mediaType) {
         #endif
         #if (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000 || (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000))
             [deviceTypes addObject: AVCaptureDeviceTypeContinuityCamera];
+            [deviceTypes addObject: AVCaptureDeviceTypeExternal];
+        #elif (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED < 140000)
+            [deviceTypes addObject: AVCaptureDeviceTypeExternalUnknown];
         #endif
     } else if (mediaType == AVMediaTypeAudio) {
         #if (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000 || (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000))

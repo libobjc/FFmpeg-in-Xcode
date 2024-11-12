@@ -22,6 +22,7 @@
 #include "libavutil/avassert.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/timestamp.h"
@@ -636,6 +637,11 @@ static int concat_parse_script(AVFormatContext *avf)
         default:
             FAIL(AVERROR_BUG);
         }
+    }
+
+    if (!file) {
+        ret = AVERROR_INVALIDDATA;
+        goto fail;
     }
 
     if (file->inpoint != AV_NOPTS_VALUE && file->outpoint != AV_NOPTS_VALUE) {

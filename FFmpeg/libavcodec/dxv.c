@@ -23,8 +23,8 @@
 #include <stdint.h>
 
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 
-#include "mathops.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
@@ -240,7 +240,7 @@ static int get_opcodes(GetByteContext *gb, uint32_t *table, uint8_t *dst, int op
 
     size_in_bits = bytestream2_get_le32(gb);
     endoffset = ((size_in_bits + 7) >> 3) - 4;
-    if (endoffset <= 0 || bytestream2_get_bytes_left(gb) < endoffset)
+    if ((int)endoffset <= 0 || bytestream2_get_bytes_left(gb) < endoffset)
         return AVERROR_INVALIDDATA;
 
     offset = endoffset;
@@ -1048,8 +1048,6 @@ static int dxv_decode(AVCodecContext *avctx, AVFrame *frame,
     }
 
     /* Frame is ready to be output. */
-    frame->pict_type = AV_PICTURE_TYPE_I;
-    frame->flags |= AV_FRAME_FLAG_KEY;
     *got_frame = 1;
 
     return avpkt->size;

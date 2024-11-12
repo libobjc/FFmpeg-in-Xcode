@@ -23,6 +23,7 @@
 #include "demux.h"
 #include "libavutil/avstring.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "network.h"
 #include "os_support.h"
 #include "internal.h"
@@ -196,6 +197,9 @@ static int sap_fetch_packet(AVFormatContext *s, AVPacket *pkt)
     int n, ret;
     struct pollfd p = {fd, POLLIN, 0};
     uint8_t recvbuf[RTP_MAX_PACKET_LENGTH];
+
+    if (fd < 0)
+        return fd;
 
     if (sap->eof)
         return AVERROR_EOF;

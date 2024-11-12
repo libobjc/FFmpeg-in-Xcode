@@ -23,11 +23,11 @@
  * Cineform HD video encoder
  */
 
-#include <stdlib.h>
-#include <string.h>
+#include <stddef.h>
 
-#include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
+#include "libavutil/pixdesc.h"
 
 #include "avcodec.h"
 #include "bytestream.h"
@@ -36,7 +36,6 @@
 #include "codec_internal.h"
 #include "encode.h"
 #include "put_bits.h"
-#include "thread.h"
 
 /* Derived from existing tables from decoder */
 static const unsigned codebook[256][2] = {
@@ -258,8 +257,8 @@ static av_cold int cfhd_encode_init(AVCodecContext *avctx)
     if (ret < 0)
         return ret;
 
-    if (avctx->height < 4) {
-        av_log(avctx, AV_LOG_ERROR, "Height must be >= 4.\n");
+    if (avctx->height < 32) {
+        av_log(avctx, AV_LOG_ERROR, "Height must be >= 32.\n");
         return AVERROR_INVALIDDATA;
     }
 
@@ -553,7 +552,7 @@ static int cfhd_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                          width, height * 2);
     }
 
-    ret = ff_alloc_packet(avctx, pkt, 256LL + s->planes * (2LL * avctx->width * (avctx->height + 15) + 2048LL));
+    ret = ff_alloc_packet(avctx, pkt, 256LL + s->planes * (4LL * avctx->width * (avctx->height + 15) + 2048LL));
     if (ret < 0)
         return ret;
 
@@ -761,7 +760,6 @@ static int cfhd_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                         } else if (count > 0) {
                             count = put_runcode(pb, count, rb);
                         }
-
                         put_bits(pb, cb[index].size, cb[index].bits);
                     }
 
@@ -872,5 +870,6 @@ const FFCodec ff_cfhd_encoder = {
                           AV_PIX_FMT_GBRAP12,
                           AV_PIX_FMT_NONE
                         },
+    .color_ranges     = AVCOL_RANGE_MPEG,
     .caps_internal    = FF_CODEC_CAP_INIT_CLEANUP,
 };

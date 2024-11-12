@@ -31,6 +31,7 @@
 #include "hwcontext_dxva2.h"
 #include "hwcontext_internal.h"
 #include "imgutils.h"
+#include "mem.h"
 #include "pixdesc.h"
 #include "pixfmt.h"
 #include "compat/w32dlfcn.h"
@@ -146,7 +147,7 @@ static AVBufferRef *dxva2_pool_alloc(void *opaque, size_t size)
     if (s->nb_surfaces_used < hwctx->nb_surfaces) {
         s->nb_surfaces_used++;
         return av_buffer_create((uint8_t*)s->surfaces_internal[s->nb_surfaces_used - 1],
-                                sizeof(*hwctx->surfaces), dxva2_pool_release_dummy, 0, 0);
+                                sizeof(**hwctx->surfaces), dxva2_pool_release_dummy, 0, 0);
     }
 
     return NULL;
