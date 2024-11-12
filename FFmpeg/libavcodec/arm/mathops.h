@@ -56,6 +56,8 @@ static av_always_inline av_const int FASTDIV(int a, int b)
 static av_always_inline av_const int FASTDIV(int a, int b)
 {
     int r, t;
+    // Edit by Single
+    extern const uint32_t ff_inverse[257];
     __asm__ ("umull %1, %0, %2, %3"
              : "=&r"(r), "=&r"(t) : "r"(a), "r"(ff_inverse[b]));
     return r;

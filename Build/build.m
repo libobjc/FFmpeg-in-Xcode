@@ -85,15 +85,10 @@ NSString * SGFAppend(NSString *s, NSString *a)
     return [s stringByAppendingPathComponent:a];
 }
 
-/**
- *  Remove : libavutil   ---> time.h
- *  Edit   : libavcodec  ---> videotoolbox.c
- *           libavfilter ---> vsrc_mandelbrot.c
- */
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
         NSString *s = @"/Users/gary/Documents/coding/github/FFmpeg";
-        NSString *d = @"/Users/gary/Documents/coding/gary/FFmpeg-in-Xcode/FFmpeg";
+        NSString *d = @"/Users/gary/Documents/coding/github/FFmpeg-in-Xcode/FFmpeg";
         
         NSArray * dirs = @[@"fftools",
                            @"libavcodec",
@@ -158,6 +153,17 @@ int main(int argc, const char * argv[]) {
             SGFReplace(SGFAppend(d, @"libavcodec/bsf/mpeg4_unpack_bframes.c"),
                        @"#include \"startcode.h\"",
                        @"// Edit by Single\n#include \"../startcode.h\"");
+            
+            // Update to FFmpeg 7.1
+            SGFReplace(SGFAppend(d, @"libavcodec/arm/mathops.h"),
+                       @"    __asm__ (\"umull %1, %0, %2, %3\"",
+                       @"    // Edit by Single\n    extern const uint32_t ff_inverse[257];\n    __asm__ (\"umull %1, %0, %2, %3\"");
+            SGFReplace(SGFAppend(d, @"libavcodec/hevc/hevcdec.c"),
+                       @"#include \"thread.h\"",
+                       @"// Edit by Single\n#include \"../thread.h\"");
+            SGFReplace(SGFAppend(d, @"libavcodec/opus/parse.c"),
+                       @"#include \"mathops.h\"",
+                       @"// Edit by Single\n#include \"../mathops.h\"");
         }
     }
     return 0;

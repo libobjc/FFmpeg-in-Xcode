@@ -53,7 +53,8 @@
 #include "profiles.h"
 #include "progressframe.h"
 #include "refstruct.h"
-#include "thread.h"
+// Edit by Single
+#include "../thread.h"
 
 static const uint8_t hevc_pel_weight[65] = { [2] = 0, [4] = 1, [6] = 2, [8] = 3, [12] = 4, [16] = 5, [24] = 6, [32] = 7, [48] = 8, [64] = 9 };
 

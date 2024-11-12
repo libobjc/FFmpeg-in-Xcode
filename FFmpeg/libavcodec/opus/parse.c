@@ -33,7 +33,8 @@
 
 #include "avcodec.h"
 #include "internal.h"
-#include "mathops.h"
+// Edit by Single
+#include "../mathops.h"
 #include "opus.h"
 #include "parse.h"
 #include "vorbis_data.h"
